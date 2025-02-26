@@ -292,6 +292,63 @@ The following tasks are defined:
 * **`terminate_openocd`**: This task terminates any running openocd process.
 * **`run_qemu`**: run the QEMU target, with the proper parameters.
 
+```
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build_volvo_od2",
+            "type": "shell",
+            "command": "make",
+            "args": ["volvo_od2.bin"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "build_vw_nc03",
+            "type": "shell",
+            "command": "make",
+            "args": ["vw_nc03.bin"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "build_qemu",
+            "type": "shell",
+            "command": "make",
+            "args": ["qemu.bin"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "terminate_openocd",
+            "type": "shell",
+            "command": "pkill",
+            "args": ["openocd"],
+            "problemMatcher": []
+        },
+        {
+            "label": "run_qemu",
+            "type": "shell",
+            "command": "make",
+            "args": ["run_qemu"],
+            "problemMatcher": []
+        }
+    ]
+}
+s
+
+```
+
 ### How to Use the VS Code Debugger
 
 1.  **Install Extensions:**
