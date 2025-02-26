@@ -244,3 +244,143 @@ This section provides more in-depth descriptions of the key source files.
 6.  **Reference `libopencm3`:**  For detailed information on the STM32-specific peripheral functions (from `libopencm3`), refer to the libopencm3 documentation.
 
 This detailed documentation should provide a comprehensive understanding of the project's structure, functionality, and how to adapt it to different vehicles and configurations. Remember to consult the specific datasheets and reference manuals for the STM32F1 and Nuvoton NUC131 microcontrollers for low-level hardware details.
+
+## VS Code Configuration for Debugging
+
+This project includes a `launch.json` file in the `.vscode` directory for easy debugging within VS Code. It supports both on-hardware debugging (using OpenOCD and an ST-Link V2 programmer) and QEMU emulation.
+
+### `launch.json` Configurations
+
+The `.vscode/launch.json` file defines the following debug configurations:
+
+1.  **`OpenOCD (STM32 - Volvo OD2)`:**
+    *   **Purpose:** This configuration is used to debug the firmware running on the STM32F103x8 microcontroller found in the Volvo OD2 adapter.
+    *   **Debugger:** It uses OpenOCD as the debugging server.
+    *   **Hardware:** Requires an ST-Link V2 programmer connected to the target board.
+    *   **Configuration Files:** It specifies the `interface/stlink.cfg` (for the ST-Link V2 interface) and `target/stm32f1x.cfg` (for the STM32F103x8 target).
+    *   **Pre-launch task:** The `build_volvo_od2` build task is ran before starting the debug session.
+    * **Post-debug task:** The `terminate_openocd` task is ran after the session is stopped.
+    *   **Executable:**  `firmware.elf`
+
+2.  **`OpenOCD (Nuvoton NUC131 - VW NC03)`:**
+    *   **Purpose:**  This configuration is used to debug the firmware running on the Nuvoton NUC131 microcontroller found in the VW NC03 adapter.
+    *   **Debugger:** It uses OpenOCD as the debugging server.
+    *   **Hardware:** Requires an ST-Link V2 programmer connected to the target board.
+    *   **Configuration Files:** It specifies the `interface/stlink.cfg` (for the ST-Link V2 interface) and `target/NUC131.cfg` (for the NUC131 target). You will need to create the `target/NUC131.cfg` file.
+    *   **Pre-launch task:** The `build_vw_nc03` build task is ran before starting the debug session.
+    * **Post-debug task:** The `terminate_openocd` task is ran after the session is stopped.
+    *   **Executable:**  `firmware.elf`
+
+3.  **`QEMU (STM32)`:**
+    *   **Purpose:** This configuration is used to debug the STM32F1 firmware within the QEMU emulator.
+    *   **Debugger:** It uses `arm-none-eabi-gdb` (the ARM cross-compiler's GDB) connected to QEMU.
+    *   **Emulation:** QEMU must be running separately, acting as a GDB server.
+    *   **GDB Server Address:** It connects to `localhost:1234`, which is the default port QEMU uses for GDB.
+    *   **Pre-launch task:** The `build_qemu` build task is ran before starting the debug session.
+    * **Post-debug task:** The `run_qemu` task is ran after the session is stopped.
+    *   **Executable:**  `firmware.elf`
+
+### `tasks.json` and Build Tasks
+
+The `launch.json` file uses `preLaunchTask` and `postDebugTask` properties to define tasks that should be run before starting a debug session and after the session is stopped. These tasks are defined in the `.vscode/tasks.json` file.
+
+The following tasks are defined:
+
+* **`build_volvo_od2`**: Builds the `firmware.elf` file for the Volvo OD2 target. It uses the `make volvo_od2.bin` command.
+* **`build_vw_nc03`**: Builds the `firmware.elf` file for the VW NC03 target. It uses the `make vw_nc03.bin` command.
+* **`build_qemu`**: Builds the `firmware.elf` file for the QEMU target. It uses the `make qemu.bin` command.
+* **`terminate_openocd`**: This task terminates any running openocd process.
+* **`run_qemu`**: run the QEMU target, with the proper parameters.
+
+### How to Use the VS Code Debugger
+
+1.  **Install Extensions:**
+    *   Ensure you have the **Cortex-Debug** extension installed and enabled.
+    *   Ensure you have the **C/C++** extension installed and enabled.
+2.  **Install Toolchain:**
+    *   Ensure you have the **ARM cross-compiler toolchain** (including `arm-none-eabi-gdb`) installed and added to your system's PATH.
+    *   Ensure you have **OpenOCD** installed and added to your system's PATH.
+    * Ensure you have **QEMU** installed.
+3.  **Build the Firmware:**
+    *   Use the `make` command in the terminal to build the appropriate firmware target (e.g., `make volvo_od2.bin`, `make vw_nc03.bin`, or `make qemu.bin`).
+    * This build will generate the `firmware.elf` file.
+4.  **Connect Hardware (If Applicable):**
+    *   For on-hardware debugging (STM32 or Nuvoton), connect your ST-Link V2 programmer to the target board.
+5.  **Open VS Code:**
+    *   Open the project folder in VS Code.
+6.  **Select Debug Configuration:**
+    *   Go to the "Run and Debug" view (Ctrl+Shift+D or Cmd+Shift+D).
+    *   Select the desired configuration from the dropdown menu (e.g., "OpenOCD (STM32 - Volvo OD2)," "OpenOCD (Nuvoton NUC131 - VW NC03)," or "QEMU (STM32)").
+7.  **Start Debugging:**
+    *   Press the "Start Debugging" button (or F5).
+    * The build task will be executed first.
+    * The debug process will start.
+8. **QEMU specific**:
+    * If you are using the "QEMU (STM32)", the debug process will also execute the `run_qemu` task. You can also execute it manually, in a terminal.
+9.  **Set Breakpoints, Inspect, etc.:**
+    *   Use the standard VS Code debugger features to set breakpoints, step through code, inspect variables, etc.
+
+### Troubleshooting
+
+*   **"Property server is not allowed":** Ensure the "Cortex-Debug" extension is correctly installed and enabled in VS Code.
+* **"Please use type node instead" and  "The debug type is not recognized"**: Ensure that the "Cortex-Debug" and "C/C++" extensions are enabled.
+*   **OpenOCD Errors:** Check your OpenOCD installation and make sure the interface and target configuration files are correct.
+* **target/NUC131.cfg missing**: This file is needed for Nuvoton debugging, you will have to create it.
+*   **GDB Connection Errors (QEMU):** Ensure that QEMU is running in debug mode (`make run_qemu` or manually with `-S -s`) and that GDB is configured to connect to the correct port (usually `localhost:1234`).
+* **Wrong OpenOCD/GDB**: Verify that the correct version of openocd and GDB is used.
+* **Wrong PATH**: Check that all required commands are in your PATH.
+
+This documentation should provide you with the necessary information to use VS Code for debugging this project.
+
+## VS Code Configuration for Debugging
+
+This project includes a `launch.json` file in the `.vscode` directory for easy debugging within VS Code. It supports both on-hardware debugging (using OpenOCD and an ST-Link V2 programmer) and QEMU emulation.
+
+### `launch.json` Configurations
+
+The `.vscode/launch.json` file defines the following debug configurations:
+
+```jsonc
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "OpenOCD (STM32 - Volvo OD2)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build_volvo_od2",
+            "postDebugTask": "terminate_openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f1x.cfg"
+            ],
+            "executable": "${workspaceFolder}/firmware.elf"
+        },
+        {
+            "name": "OpenOCD (Nuvoton NUC131 - VW NC03)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build_vw_nc03",
+            "postDebugTask": "terminate_openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/NUC131.cfg"
+            ],
+            "executable": "${workspaceFolder}/firmware.elf"
+        },
+        {
+            "name": "QEMU (STM32)",
+            "type": "cppdbg",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/firmware.elf",
+            "miDebuggerServerAddress": "localhost:1234",
+            "miDebuggerPath": "arm-none-eabi-gdb",
+            "preLaunchTask": "build_qemu",
+            "postDebugTask": "run_qemu",
+            "MIMode": "gdb"
+        }
+    ]
+}
