@@ -38,8 +38,8 @@ The firmware *emulates* the following protocols, commonly used by Android head u
 
 The firmware is designed for CANBUS adapters based on:
 
-*   **STM32F103x8 microcontrollers:** (Common in "Volvo OD2" style adapters).
-*   **Nuvoton NUC131 microcontrollers:** (Common in "VW NC03" style adapters).
+*   **STM32F103x8 microcontrollers:** (Common in HiWorld adapters).
+*   **Nuvoton NUC131 microcontrollers:** (Common in Raise adapters).
 
 The project includes schematics and PCB layouts (where available) for common adapter types.  You should visually inspect your CAN box and compare it to the provided schematics to ensure compatibility. *Crucially*, identify the microcontroller used in your adapter.
 

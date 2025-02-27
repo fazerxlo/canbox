@@ -105,8 +105,8 @@ The project uses Makefiles for building and flashing the firmware.
     *   `make volvo_od2.bin`: Builds the firmware for the Volvo OD2 adapter.
     *   `make qemu.bin`: Builds the firmware for QEMU emulation.
 4.  **Flash:** Use the `make flash_...` commands:
-    *   `make flash_vw_nc03`: Flashes the firmware to a VW NC03 adapter using OpenOCD.  Requires an ST-Link V2 programmer.
-    *   `make flash_volvo_od2`: Flashes the firmware to a Volvo OD2 adapter using OpenOCD. Requires an ST-Link V2 programmer.
+    *   `make flash_vw_nc03`: Flashes the firmware to a Raise VW NC03 adapter using OpenOCD.  Requires an ST-Link V2 programmer.
+    *   `make flash_volvo_od2`: Flashes the firmware to a Raise Volvo OD2 adapter using OpenOCD. Requires an ST-Link V2 programmer.
 
 **QEMU Emulation:**
 

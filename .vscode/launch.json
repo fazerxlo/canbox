@@ -1,0 +1,43 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "OpenOCD (STM32 - Volvo OD2)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build_volvo_od2",
+            "postDebugTask": "terminate_openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f1x.cfg"
+            ],
+            "executable": "${workspaceFolder}/firmware.elf"
+        },
+        {
+            "name": "OpenOCD (Nuvoton NUC131 - VW NC03)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "build_vw_nc03",
+            "postDebugTask": "terminate_openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/NUC131.cfg"
+            ],
+            "executable": "${workspaceFolder}/firmware.elf"
+        },
+        {
+            "name": "QEMU (STM32)",
+            "type": "cppdbg",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/firmware.elf",
+            "miDebuggerServerAddress": "localhost:1234",
+            "miDebuggerPath": "arm-none-eabi-gdb",
+            "preLaunchTask": "build_qemu",
+            "postDebugTask": "run_qemu",
+            "MIMode": "gdb",
+        }
+    ]
+}
