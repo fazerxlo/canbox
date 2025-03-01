@@ -345,7 +345,6 @@ The following tasks are defined:
         }
     ]
 }
-s
 
 ```
 
