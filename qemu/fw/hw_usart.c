@@ -37,6 +37,25 @@ struct usart_t * hw_usart_get(void)
 	return &usart1;
 }
 
+
+// **New USART2 definition and get function:**
+static struct usart_t usart2 =
+{
+    .baddr = USART2,          // Use USART2 base address
+    .rcc = RCC_USART2,          // Enable USART2 clock
+    .tx = GPIO_INIT(A, 2),     // Example TX pin for USART2 (adjust if needed for your QEMU machine)
+    .rx = GPIO_INIT(A, 3),     // Example RX pin for USART2 (adjust if needed for your QEMU machine)
+    .irq = NVIC_USART2_IRQ,     // Enable USART2 IRQ
+    .baudrate = 0,
+    .rx_cnt = 0,
+    .tx_cnt = 0,
+};
+
+struct usart_t * hw_usart_get2(void) // New get function for USART2
+{
+	return &usart2;
+}
+
 void hw_usart_setup(struct usart_t * usart, uint32_t speed, uint8_t * txbuf, uint32_t txbuflen, uint8_t * rxbuf, uint32_t rxbuflen)
 {
 	ring_init(&usart->tx_ring, txbuf, txbuflen);
@@ -107,6 +126,12 @@ void usart_isr(struct usart_t * usart)
 void usart1_isr(void)
 {
 	usart_isr(&usart1);
+}
+
+
+void usart2_isr(void)  // New ISR for USART2
+{
+	usart_isr(&usart2);
 }
 
 int hw_usart_write(struct usart_t * usart, const uint8_t * ptr, int len)

@@ -4,7 +4,8 @@
 #include <inttypes.h>
 
 struct usart_t;
-struct usart_t * hw_usart_get(void);
+struct usart_t * hw_usart_get(void); // Function to get USART1 (original)
+struct usart_t * hw_usart_get2(void); // Function to get USART2 (new)
 
 void hw_usart_setup(struct usart_t *, uint32_t speed, uint8_t * txbuf, uint32_t txbuflen, uint8_t * rxbuf, uint32_t rxbuflen);
 void hw_usart_disable(struct usart_t *);
@@ -19,4 +20,3 @@ uint32_t hw_usart_get_rx(struct usart_t *);
 uint32_t hw_usart_get_tx(struct usart_t *);
 
 #endif
-

@@ -512,6 +512,11 @@ int main(void)
 
 				canbox_process();
 			}
+
+			// **Example: Send test data to the second serial port every 250ms**
+            char buf2[32];
+            snprintf(buf2, sizeof(buf2), "USART2 Tick! Uptime: %lu\r\n", timer.sec);
+            hw_usart_write(hw_usart_get2(), (uint8_t *)buf2, strlen(buf2));
 		}
 
 		if (timer.flag_1000ms) {

@@ -14,6 +14,8 @@
 
 static uint8_t usart_tx_ring_buffer[512];
 static uint8_t usart_rx_ring_buffer[32];
+static uint8_t usart2_tx_ring_buffer[512]; // New buffers for USART2
+static uint8_t usart2_rx_ring_buffer[32];
 
 void hw_setup(void)
 {
@@ -26,6 +28,9 @@ void hw_setup(void)
 	hw_systick_setup();
 
 	hw_usart_setup(hw_usart_get(), 38400, usart_tx_ring_buffer, sizeof(usart_tx_ring_buffer), usart_rx_ring_buffer, sizeof(usart_rx_ring_buffer));
+
+	// **Setup USART2 (new second serial port)**
+	hw_usart_setup(hw_usart_get2(), 38400, usart2_tx_ring_buffer, sizeof(usart2_tx_ring_buffer), usart2_rx_ring_buffer, sizeof(usart2_rx_ring_buffer));
 
 	hw_can_setup(hw_can_get_mscan(), e_speed_125);
 
