@@ -1,7 +1,3 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-
 #include "hw.h"
 #include "hw_tick.h"
 #include "hw_usart.h"
@@ -9,6 +5,9 @@
 #include "car.h"
 #include "canbox.h"
 #include "conf.h"
+#include "slcan.h"  // Include the slcan header
+#include <stdio.h>
+
 
 static uint32_t rear_off_delay = 0;
 static uint32_t rear_on_delay = 0;
@@ -65,25 +64,25 @@ uint8_t sniffer_on = 0;
 static void clr_screen(void)
 {
 	const char clr[] = "\033[2J";
-	hw_usart_write(hw_usart_get(), (uint8_t *)clr, sizeof(clr));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)clr, sizeof(clr));
 
 	const char home[] = "\033[H";
-	hw_usart_write(hw_usart_get(), (uint8_t *)home, sizeof(home));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)home, sizeof(home));
 }
 
 static void clr_rscreen(void)
 {
 	const char clr[] = "\033[1J";
-	hw_usart_write(hw_usart_get(), (uint8_t *)clr, sizeof(clr));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)clr, sizeof(clr));
 
 	const char home[] = "\033[H";
-	hw_usart_write(hw_usart_get(), (uint8_t *)home, sizeof(home));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)home, sizeof(home));
 }
 
 static void hide_cursor(void)
 {
 	const char hide[] = "\033[?25l";
-	hw_usart_write(hw_usart_get(), (uint8_t *)hide, sizeof(hide));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)hide, sizeof(hide));
 }
 
 static void print_line(void)
@@ -91,7 +90,7 @@ static void print_line(void)
 	char buf[32];
 
 	snprintf(buf, sizeof(buf), "--------------------\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 }
 
 static void debug_ch_process(uint8_t ch)
@@ -108,7 +107,7 @@ static void debug_ch_process(uint8_t ch)
 		enum e_car_t car = car_get_next_car();
 		conf_set_car(car);
 		car_init(conf_get_car(), &key_cb);
-		hw_can_clr(hw_can_get_mscan());
+		//hw_can_clr(hw_can_get_mscan()); //No need on QEMU
 	}
 	else if (ch == 'b') {
 
@@ -121,10 +120,11 @@ static void debug_ch_process(uint8_t ch)
 	}
 	else if (ch == 'm') {
 
-		uint8_t msgs_num = hw_can_get_msg_nums(hw_can_get_mscan());
+		//uint8_t msgs_num = hw_can_get_msg_nums(hw_can_get_mscan()); // No hardware can on qemu
 
-		if (++msg_idx >= msgs_num)
-			msg_idx = 0;
+		//if (++msg_idx >= msgs_num)
+		//	msg_idx = 0;
+      //TODO: implement virtual can messages array
 	}
 	else if (ch == 's') {
 
@@ -180,30 +180,36 @@ static void debug_ch_process(uint8_t ch)
 static void usart_process(void)
 {
 	uint8_t ch = 0;
-	if (!hw_usart_read_ch(hw_usart_get(), &ch))
-		return;
+    //Read from CAN usart
+    if (hw_usart_read_ch(hw_usart_get_can(), &ch)) {
+        // Process incoming bytes from slcan.
+        slcan_process_char(ch);
+    }
 
-	if (!debug_on) {
+    //Read from debug usart.
+    if (hw_usart_read_ch(hw_usart_get_debug(), &ch)) {
+    	if (!debug_on) {
+    		canbox_cmd_process(ch);
 
-		canbox_cmd_process(ch);
+    		if (ch == 'O') {
 
-		if (ch == 'O') {
+    			if (debug_on_cnt++ > 10) {
 
-			if (debug_on_cnt++ > 10) {
+    				debug_on = 1;
+    				sniffer_on = 0;
+    				msg_idx = 0;
 
-				debug_on = 1;
-				sniffer_on = 0;
-				msg_idx = 0;
+    				clr_screen();
+    				hide_cursor();
+    			}
+    		}
+    		else
+    			debug_on_cnt = 0;
+    	}
+    	else
+    		debug_ch_process(ch);
+    }
 
-				clr_screen();
-				hide_cursor();
-			}
-		}
-		else
-			debug_on_cnt = 0;
-	}
-	else
-		debug_ch_process(ch);
 }
 
 extern uint32_t can_isr_cnt;
@@ -212,19 +218,22 @@ int max_show_sniff_num = 10;
 
 void print_sniffer(void)
 {
+    //Since we removed hardware can, sniffer is not used.
+    //TODO: implement virtual can messages array
+    /*
 	char buf[200];
 
 	clr_rscreen();
 
 	snprintf(buf, sizeof(buf), "Sniffer window\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	print_line();
 
 	uint8_t ids = hw_can_get_msg_nums(hw_can_get_mscan());
 	uint32_t msgs = hw_can_get_pack_nums(hw_can_get_mscan());
 	snprintf(buf, sizeof(buf), "Can: IDs:%" PRIu8 " Msgs:%" PRIu32 " Irqs:%" PRIu32 " \r\n", ids, msgs, can_isr_cnt);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	print_line();
 
@@ -240,13 +249,14 @@ void print_sniffer(void)
 
 		snprintf(buf, sizeof(buf), "0x%X : %02x %02x %02x %02x %02x %02x %02x %02x \r\n",
 			(int)msg.id, msg.data[0], msg.data[1], msg.data[2], msg.data[3], msg.data[4], msg.data[5], msg.data[6], msg.data[7]);
-		hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+		hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 	}
 
 	print_line();
 
 	snprintf(buf, sizeof(buf), "Ctrl keys: s - to main window; m - shift msgs\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
+    */
 }
 
 uint32_t wakeups = 0;
@@ -286,9 +296,6 @@ void print_debug(void)
 		case e_car_lr2_2013my:
 			scar = "LR2 2013MY";
 			break;
-		case e_car_peugeot_407:
-			scar = "PEUGEOT 407 2008MY";
-			break;
 		case e_car_xc90_2007my:
 			scar = "XC90 2007MY";
 			break;
@@ -301,6 +308,9 @@ void print_debug(void)
 		case e_car_toyota_premio_26x:
 			scar = "TOYOTA PREMIO 26x";
 			break;
+        case e_car_peugeot_407:
+            scar = "Peugeot 407";
+            break;
 		default:
 			break;
 	}
@@ -327,31 +337,31 @@ void print_debug(void)
 	}
 
 	snprintf(buf, sizeof(buf), "Main window\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	print_line();
 
 	snprintf(buf, sizeof(buf), "Configuration(%d)\r\n", conf_get_idx());
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	print_line();
 
 	snprintf(buf, sizeof(buf), "Car: %s Vin: %s  %lu km        \r\n", scar, svin, odo);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	snprintf(buf, sizeof(buf), "CanBox: %s          \r\n", scb);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	snprintf(buf, sizeof(buf), "Conf: Illum:%d Rear Delay:%d          \r\n", conf_get_illum(), conf_get_rear_delay());
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	snprintf(buf, sizeof(buf), "State\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	print_line();
 
 	snprintf(buf, sizeof(buf), "Uptime: %.5" PRIu32 ".%.3" PRIu32 " Wakeups: %" PRIu32 "     \r\n", timer.sec, timer.msec, wakeups);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	const char * ssel = "x";
 	switch (sel) {
@@ -384,16 +394,16 @@ void print_debug(void)
 	}
 
 	snprintf(buf, sizeof(buf), "Acc:%d Ign:%d Selector:%s R:%d Wheel:%d  \r\n", acc, ign, ssel, get_rear_delay_state(), angle);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	snprintf(buf, sizeof(buf), "Illum:%d ParkLights:%d NearLights:%d     \r\n", ill, park_lights, near_lights);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	snprintf(buf, sizeof(buf), "Park:%02x Front:%02x %02x %02x %02x Rear:%02x %02x %02x %02x\r\n",
 		radar.state,
 		radar.fl, radar.flm, radar.frm, radar.fr,
 		radar.rl, radar.rlm, radar.rrm, radar.rr);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
 	//uint32_t rx_ovr = hw_usart_get_rx_overflow(hw_usart_get());
 	//uint32_t tx_ovr = hw_usart_get_tx_overflow(hw_usart_get());
@@ -402,33 +412,34 @@ void print_debug(void)
 	//snprintf(buf, sizeof(buf), "Usart: RX:%" PRIu32 " TX:%" PRIu32 " RXOver:%" PRIu32 " TXOver:%" PRIu32 " On:%" PRIu32 " Isr:%" PRIu32 "\r\n", rx_cnt, tx_cnt, rx_ovr, tx_ovr, debug_on_cnt, usart_isr_cnt);
 	//hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
 
-	uint8_t n1 = hw_can_get_msg_nums(hw_can_get_mscan());
-	uint32_t n2 = hw_can_get_pack_nums(hw_can_get_mscan());
+	uint8_t n1 = 0; //hw_can_get_msg_nums(hw_can_get_mscan()); //No hardware CAN on QEMU.
+	uint32_t n2 = 0; //hw_can_get_pack_nums(hw_can_get_mscan());
 	snprintf(buf, sizeof(buf), "Can: IDs:%" PRIu8 " Msgs:%" PRIu32 " Irqs:%" PRIu32 "     \r\n", n1, n2, can_isr_cnt);
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 
-	uint8_t msgs_num = hw_can_get_msg_nums(hw_can_get_mscan());
-	if (msgs_num && msg_idx < msgs_num) {
+    //No hardware CAN on QEMU
+	//uint8_t msgs_num = hw_can_get_msg_nums(hw_can_get_mscan());
+	//if (msgs_num && msg_idx < msgs_num) {
 
-		struct msg_can_t msg;
-		if (hw_can_get_msg(hw_can_get_mscan(), &msg, msg_idx)) {
+	//	struct msg_can_t msg;
+	//	if (hw_can_get_msg(hw_can_get_mscan(), &msg, msg_idx)) {
 
-			snprintf(buf, sizeof(buf), "Can%d/%d:  %08x:%02x.%02x.%02x.%02x.%02x.%02x.%02x.%02x     \r\n",
-					msg_idx + 1, msgs_num, (int)msg.id, msg.data[0], msg.data[1], msg.data[2], msg.data[3], msg.data[4], msg.data[5], msg.data[6], msg.data[7]);
-			hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
-		}
-	}
+	//		snprintf(buf, sizeof(buf), "Can%d/%d:  %08x:%02x.%02x.%02x.%02x.%02x.%02x.%02x.%02x     \r\n",
+	//				msg_idx + 1, msgs_num, (int)msg.id, msg.data[0], msg.data[1], msg.data[2], msg.data[3], msg.data[4], msg.data[5], msg.data[6], msg.data[7]);
+	//		hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
+	//	}
+	//}
 
 	print_line();
 
 	snprintf(buf, sizeof(buf), "Ctrl keys: o - exit; m - shift msgs\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 	snprintf(buf, sizeof(buf), "i/I - set Illum; d/D - set rear Delay\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 	snprintf(buf, sizeof(buf), "c - set Car; b - set Canbox\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 	snprintf(buf, sizeof(buf), "s - save conf; S - to Sniffer window\r\n");
-	hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+	hw_usart_write(hw_usart_get_debug(), (uint8_t *)buf, strlen(buf));
 }
 
 static void gpio_process(void)
@@ -460,10 +471,13 @@ uint8_t rmax_global[4] = { 10, 10, 10, 10 };
 
 int main(void)
 {
-	hw_setup();
+    hw_setup();
 
-	conf_read();
+    // Initialize both USARTs.
+    hw_usart_setup(hw_usart_get_can(), 38400, usart1_tx_ring_buffer, sizeof(usart1_tx_ring_buffer), usart1_rx_ring_buffer, sizeof(usart1_rx_ring_buffer));
+    hw_usart_setup(hw_usart_get_debug(), 38400, usart2_tx_ring_buffer, sizeof(usart2_tx_ring_buffer), usart2_rx_ring_buffer, sizeof(usart2_rx_ring_buffer));
 
+    conf_read();
 	car_init(conf_get_car(), &key_cb);
 
 	uint8_t acc = car_get_acc();
@@ -520,33 +534,29 @@ int main(void)
 
 			debug_on_cnt = 0;
 
-			uint32_t nums = hw_can_get_pack_nums(hw_can_get_mscan());
-			if (nums == ms_can_nums)
-				ms_can_stop_counter++;
-			else
-				ms_can_stop_counter = 0;
-
-			if (acc && (conf_get_car() == e_car_skoda_fabia))
-				ms_can_stop_counter = 1;
-
-			ms_can_nums = nums;
-
-			if (ms_can_stop_counter > 10) {
-
-				conf_write();
-
-				hw_sleep();
-
-				ms_can_stop_counter = 0;
-
-				hw_setup();
-
-				conf_read();
-
-				debug_on = 0;
-
-				wakeups++;
-			}
+            //No hardware can messages
+			//uint32_t nums = hw_can_get_pack_nums(hw_can_get_mscan());
+			//if (nums == ms_can_nums)
+			//	ms_can_stop_counter++;
+			//else
+			//	ms_can_stop_counter = 0;
+            //
+			//if (ms_can_stop_counter > 10) {
+            //
+			//	conf_write();
+            //
+			//	hw_sleep();
+            //
+			//	ms_can_stop_counter = 0;
+            //
+			//	hw_setup();
+            //
+			//	conf_read();
+            //
+			//	debug_on = 0;
+            //
+			//	wakeups++;
+			//}
 		}
 	}
 }
