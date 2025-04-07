@@ -257,6 +257,53 @@ The primary focus is on messages typically found on the **CAN Comfort (CAN-INFO)
 *   **Proxy Role:** Optional: Detect state changes, map to serial protocol button codes.
 *   **Signals (Bits map 1:1 to buttons, see `PSACAN.md`):** MENU, TEL, CLIM, TRIP, MODE, AUDIO, OK, ESC, DARK, Arrows, etc. Map to corresponding RZC `0x02` codes or MQB `0x20` codes if needed.
 
+    **Key Codes (Data0) & Corresponding CAN Source Info:** *(Comprehensive List)*
+    *   --- *Menu/Navigation Panel Keys (Often CAN ID `0x3E5`)* ---
+    *   `0x02`: Menu (CAN `0x3E5` Byte 7 Bit 6 'L')
+    *   `0x03`: Up (Arrow) (CAN `0x3E5` Byte 5 Bit 6 'R')
+    *   `0x04`: Down (Arrow) (CAN `0x3E5` Byte 5 Bit 5 'S')
+    *   `0x07`: OK (CAN `0x3E5` Byte 5 Bit 4 'T')
+    *   `0x08`: Esc (CAN `0x3E5` Byte 7 Bit 0 'H')
+    *   `0x3A`: Left (Arrow) (CAN `0x3E5` Byte 6 Bit 0 'P')
+    *   `0x3B`: Right (Arrow) (CAN `0x3E5` Byte 5 Bit 7 'Q')
+    *   --- *Steering Wheel Control Keys (Often CAN ID `0x21F`)* ---
+    *   `0x11`: Source/Phone (CAN `0x21F` Byte 1 Bit 1 'S'?)
+    *   `0x12`: Seek+ / Next Track (CAN `0x21F` Byte 7 Bit 7 'F')
+    *   `0x13`: Seek- / Previous Track (CAN `0x21F` Byte 7 Bit 6 'B')
+    *   `0x14`: Vol+ (CAN `0x21F` Byte 3 Bit 3 'U')
+    *   `0x15`: Vol- (CAN `0x21F` Byte 3 Bit 2 'D')
+    *   `0x16`: Mute (SWC? Panel? Needs check)
+    *   `0x17`: Memo Up / Scroll Wheel Up (From CAN `0x21F` Byte 0 Delta Positive?)
+    *   `0x18`: Memo Down / Scroll Wheel Down (From CAN `0x21F` Byte 0 Delta Negative?)
+    *   `0x29`: Push To Talk / Voice Command (SWC? Panel? Needs check)
+    *   `0x30`: Tel On (Answer) (SWC? Panel? CAN `0x3E5` Byte 7 Bit 4 'T'?)
+    *   `0x31`: Tel Off (Hang Up) (SWC? Panel?)
+    *   --- *Mode Panel Keys (Often CAN ID `0x3E5`)* ---
+    *   `0x10`: Mode (Display) (CAN `0x3E5` Byte 6 Bit 3 'M')
+    *   `0x20`: Page SW / TRIP (Stalk Button, mapped to RZC Key `20`. Also CAN `0x3E5` Byte 6 Bit 6 'H' for Panel?)
+    *   `0x21`: Menu Mode (?)
+    *   `0x23`: Bluetooth Button (Panel?)
+    *   `0x32`: NAVI (Panel) (CAN `0x3E5`?)
+    *   `0x33`: RADIO (Panel) (CAN `0x3E5`?)
+    *   `0x34`: SETUP (Panel) (CAN `0x3E5`?)
+    *   `0x35`: ADDR (Panel) (CAN `0x3E5`?)
+    *   `0x36`: MEDIA (Panel) (CAN `0x3E5`?)
+    *   `0x37`: TRAF (Panel) (CAN `0x3E5` Byte 6 Bit 6 'J'?)
+    *   `0x50`: BAND (Panel) (CAN `0x3E5` Byte 6 Bit 1 'O'?)
+    *   `0x51`: LIST (Panel) (CAN `0x3E5` Byte 6 Bit 3 'M'?)
+    *   `0x52`: Sound / EQ (Panel) (CAN `0x3E5` Byte 6 Bit 2 'N'?)
+    *   `0x53`: TA/Info (Panel) (CAN `0x3E5` Byte 6 Bit 6 'J'?)
+    *   `0x54`: Dark (Panel) (CAN `0x3E5` Byte 5 Bit 0 'K')
+    *   `0x55`: Eject (Panel) (CAN `0x3E5` Byte 7 Bit 1 'G'?)
+    *   `0x56`: >> (FFWD) (Panel) (CAN `0x3E5`?)
+    *   `0x57`: << (REW) (Panel) (CAN `0x3E5`?)
+    *   `0x58`: ▲ (Seek?) (Panel) (CAN `0x3E5`?)
+    *   `0x59`: ▼ (Seek?) (Panel) (CAN `0x3E5`?)
+    *   `0x60`: Check Button (Panel?)
+    *   `0x80`: Power Button (Panel)
+    *   --- *System Codes* ---
+    *   `0x00`: Release / No Press
+
 ---
 
 ### Climate Control
