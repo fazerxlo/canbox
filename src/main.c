@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "hw.h"
 #include "hw_tick.h"
@@ -34,14 +35,36 @@ static void rear_delay_process(uint8_t ticks)
 
 uint8_t get_rear_delay_state(void)
 {
-	uint8_t ign = car_get_ign();
-	if (!ign)
-		return 0;
+    uint8_t ign = car_get_ign();
+    if (!ign) {
+        // Reset delays if ignition goes off
+        rear_on_delay = 0;
+        rear_off_delay = MAX_REAR_DELAY; // Ensure it's considered OFF
+        return 0;
+    }
 
-	if ((rear_on_delay > rear_on_timeout) || (rear_off_delay < conf_get_rear_delay()))
-		return 1;
-	else
-		return 0;
+    if (car_get_selector() == e_selector_r) {
+        rear_on_delay += 1; // Assuming called every tick (1ms) - adjust if using ticks argument
+         if(rear_on_delay > rear_on_timeout * 2) rear_on_delay = rear_on_timeout * 2; // Prevent overflow
+        rear_off_delay = 0;
+    } else {
+         // Start rear_off_delay ONLY if we were recently ON
+        if (rear_on_delay >= rear_on_timeout) {
+             rear_off_delay = 1; // Start the off delay immediately
+        } else if (rear_off_delay > 0) { // Only increment if off-delay has started
+            rear_off_delay += 1; // Increment off-delay
+             if(rear_off_delay > conf_get_rear_delay() * 2) rear_off_delay = conf_get_rear_delay()*2; // Prevent overflow
+        }
+        rear_on_delay = 0; // Reset on-delay
+    }
+
+
+    // Determine final state based on delays
+    if (rear_on_delay >= rear_on_timeout || (rear_off_delay > 0 && rear_off_delay < conf_get_rear_delay())) {
+        return 1; // State is ON
+    } else {
+        return 0; // State is OFF
+    }
 }
 
 struct key_cb_t key_cb =
@@ -56,7 +79,7 @@ struct key_cb_t key_cb =
 	.mici = canbox_mici,
 };
 
-uint8_t debug_on = 1;
+uint8_t debug_on = 0;
 uint32_t debug_on_cnt = 0;
 uint8_t msg_idx = 0;
 
@@ -321,6 +344,9 @@ void print_debug(void)
 		case e_cb_hiworld_vw_mqb:
 			scb = "HiWorld VW(MQB)";
 			break;
+		case e_cb_hiworld_psa_pf2:
+			scb = "Hiworld PSA(PF2)";
+			break;
 
 		default:
 			break;
@@ -433,25 +459,39 @@ void print_debug(void)
 
 static void gpio_process(void)
 {
-	uint8_t acc = car_get_acc();
-//	uint8_t ign = car_get_ign();
-//	uint8_t park_lights = car_get_park_lights();
-	uint8_t ill = car_get_illum();
+    uint8_t acc = car_get_acc();
+    // uint8_t ign = car_get_ign(); // IGN state not directly needed for GPIO here
 
-	if (acc)
-		hw_gpio_acc_on();
-	else
-		hw_gpio_acc_off();
+    // --- Illumination Pin Control ---
+    // Directly use the last known state from the 0x036 handler
+    bool lights_pin_on = car_get_illum();
 
-	if (ill > conf_get_illum())
-		hw_gpio_ill_on();
-	else
-		hw_gpio_ill_off();
+    // Optional: Also require ACC to be ON for the ILL pin? Typically yes for head units.
+    lights_pin_on = lights_pin_on && acc;
 
-	if (get_rear_delay_state())
-		hw_gpio_rear_on();
-	else
-		hw_gpio_rear_off();
+    if (acc)
+        hw_gpio_acc_on();
+    else
+        hw_gpio_acc_off();
+
+    if (lights_pin_on)
+        hw_gpio_ill_on();
+    else
+        hw_gpio_ill_off();
+
+    if (get_rear_delay_state())
+        hw_gpio_rear_on();
+    else
+        hw_gpio_rear_off();
+
+    // --- Park Pin Control ---
+    // (Assuming PARK signal logic is Ground when ON, High impedance when OFF)
+    uint8_t park_brake = car_get_park_break(); // Needs handler for the park brake CAN message
+    if (park_brake == 1) { // If Park Brake is ON
+        hw_gpio_park_on(); // Set pin LOW (Ground)
+    } else {
+        hw_gpio_park_off(); // Set pin HIGH/High-Z
+    }
 }
 
 uint8_t fmax_global[4] = { 10, 10, 10, 10 }; // Example global fmax/rmax, adjust as needed
