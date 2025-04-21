@@ -1,5 +1,3 @@
-// src/protocol/raiserzc.c
-
 #include "protocol/raiserzc.h"
 #include "canbox.h"     // Access to common canbox functions if needed (e.g. debug print)
 #include "car.h"        // Access to car_get_* functions
@@ -10,8 +8,10 @@
 #include <string.h>     // For memcpy, memset
 #include <stdio.h>      // For snprintf (debugging command process)
 
+#include <stdbool.h>
 // --- RZC Protocol Constants ---
-#define RZC_HEADER 0xFD
+// #define RZC_HEADER 0xDF // Seen in logs, might be needed for some HUs
+#define RZC_HEADER 0xFD // As per specification document
 #define RZC_MAX_DATA_LEN 30 // Define a reasonable max data payload size
 #define RZC_MAX_FRAME_LEN (1 + 1 + 1 + RZC_MAX_DATA_LEN + 1) // HD+LEN+TYPE+DATA+CS
 
@@ -32,7 +32,8 @@
 #define RZC_DTYPE_DIAGNOSTIC_INFO   0x3A // Diagnostics (Low priority)
 #define RZC_DTYPE_TRIP_CLEAR_STATUS 0x3D // Trip Clear Status (Low priority)
 #define RZC_DTYPE_MEM_SPEED         0x3B // Memorized Speed (Low priority)
-#define RZC_DTYPE_CRUISE_LIMIT      0x3D // Cruise/Limit Settings (Low priority)
+// Note: 0x3D is listed twice in spec with different meanings, check context
+//#define RZC_DTYPE_CRUISE_LIMIT      0x3D // Cruise/Limit Settings (Low priority)
 #define RZC_DTYPE_CRUISE_POPUP      0x3F // Cruise/Limit Popup (Low priority)
 #define RZC_DTYPE_VERSION_INFO      0x7F // CANbox Version
 
@@ -78,11 +79,41 @@ static uint8_t raise_rcz_checksum(uint8_t data_type, uint8_t length, const uint8
 static void snd_raise_rcz_msg(uint8_t data_type, const uint8_t *msg, uint8_t size) {
     if (size > RZC_MAX_DATA_LEN) {
         // Handle error: data payload too large
+        #ifdef DEBUG
+        char dbg_buf[64];
+        snprintf(dbg_buf, sizeof(dbg_buf), "RZC TX ERR: Payload too large (%d > %d) for DType 0x%02X\r\n", size, RZC_MAX_DATA_LEN, data_type);
+        hw_usart_write(hw_usart_get(), (uint8_t*)dbg_buf, strlen(dbg_buf));
+        #endif
         return;
     }
 
     uint8_t frame[RZC_MAX_FRAME_LEN];
     uint8_t length = 1 + size; // Length = DataType byte + Data bytes
+
+    // Basic check for valid lengths based on known types
+    // This helps catch errors early during development
+    bool length_ok = true;
+    switch (data_type) {
+        case RZC_DTYPE_BUTTON_CMD:     length_ok = (length == 4); break;
+        case RZC_DTYPE_WHEEL_ANGLE:    length_ok = (length == 3); break;
+        case RZC_DTYPE_RADAR_REVERSE:  length_ok = (length == 8); break;
+        case RZC_DTYPE_TRIP_PAGE0:     length_ok = (length == 12); break; // 1+11
+        case RZC_DTYPE_TRIP_PAGE1:     length_ok = (length == 7); break;  // 1+6
+        case RZC_DTYPE_TRIP_PAGE2:     length_ok = (length == 7); break;  // 1+6
+        case RZC_DTYPE_OUTSIDE_TEMP:   length_ok = (length == 2); break;  // 1+1
+        case RZC_DTYPE_VEHICLE_STATUS: length_ok = (length == 7); break;  // 1+6
+        // Add other types if their lengths are fixed and known
+    }
+    if (!length_ok) {
+        #ifdef DEBUG
+        char dbg_buf[64];
+        snprintf(dbg_buf, sizeof(dbg_buf), "RZC TX WARN: Incorrect LEN (%d) for DType 0x%02X\r\n", length, data_type);
+        hw_usart_write(hw_usart_get(), (uint8_t*)dbg_buf, strlen(dbg_buf));
+        #endif
+        // Optionally return here to prevent sending incorrect frames, or proceed cautiously
+        // return;
+    }
+
 
     frame[0] = RZC_HEADER;       // Header
     frame[1] = length;           // Length
@@ -99,24 +130,21 @@ static void snd_raise_rcz_msg(uint8_t data_type, const uint8_t *msg, uint8_t siz
     hw_usart_write(hw_usart_get(), frame, 3 + size + 1); // HD+LEN+TYPE+DATA+CS
 }
 
-// Helper to map temperature (°C) to RZC format (Bit 7=sign, Bits 6-0=value)
+// Helper to map temperature (°C) to RZC format (Temp + 68)
 static uint8_t map_temp_to_rzc(int16_t temp_c) {
-    uint8_t sign_bit = 0;
     uint8_t value = 0;
+    // New Mapping: Temp + 68
+    int16_t mapped_temp = temp_c + 68;
 
-    if (temp_c < 0) {
-        sign_bit = 0x80;
-        value = (uint8_t)(-temp_c);
+    // Clamp to 0-255 range
+    if (mapped_temp < 0) {
+        value = 0;
+    } else if (mapped_temp > 255) {
+        value = 255;
     } else {
-        value = (uint8_t)temp_c;
+        value = (uint8_t)mapped_temp;
     }
-
-    // Clamp value to 7 bits (0-127)
-    if (value > 127) {
-        value = 127;
-    }
-
-    return sign_bit | (value & 0x7F);
+    return value;
 }
 
 // Helper to map radar distance (0-7) to RZC radar distance (0-5)
@@ -147,11 +175,6 @@ static void raise_rcz_vehicle_status_process(void) {
         // --- ACC is OFF: Send the explicit "All OFF" status ---
         memset(data, 0x00, sizeof(data));
         // Ensure all relevant bits are 0. memset already does this.
-        // For clarity, you could explicitly zero out bits if preferred, but memset is cleaner.
-        // data[0] = 0x00; // Doors
-        // data[1] = 0x00; // Settings 1 (Park Assist Off)
-        // data[3] = 0x00; // Settings 3 (Reverse Off, PB Off, ParkLt Off)
-        // data[2], data[4], data[5] are already 0 from memset
     } else {
         // --- ACC is ON: Build payload based on current states ---
         memset(data, 0x00, sizeof(data)); // Start with a clean slate
@@ -195,7 +218,7 @@ static void raise_rcz_wheel_process(uint8_t type, int16_t min, int16_t max) {
     // Note: RZC spec says <0 is RIGHT, >0 is LEFT. Our carstate is <0 LEFT, >0 RIGHT. Need to invert.
     int16_t rcz_angle = (int16_t)scale((float)(-wheel_percent), -100.0f, 100.0f, (float)min, (float)max);
 
-    uint8_t data[2];
+    uint8_t data[2]; // LEN=3 -> 2 data bytes
     data[0] = rcz_angle & 0xFF;        // Low Byte
     data[1] = (rcz_angle >> 8) & 0xFF; // High Byte
 
@@ -211,7 +234,7 @@ static void raise_rcz_radar_process(uint8_t fmax[4], uint8_t rmax[4]) {
     struct radar_t radar;
     car_get_radar(&radar);
 
-    uint8_t data[7] = {0}; // LEN = 0x0A -> 7 DATA bytes for 0x32
+    uint8_t data[7]; // LEN = 0x08 -> 7 DATA bytes for 0x32
 
     // Data0: Radar Status
     if (radar.state == e_radar_off || radar.state == e_radar_undef) {
@@ -237,40 +260,101 @@ static void raise_rcz_radar_process(uint8_t fmax[4], uint8_t rmax[4]) {
 // DataType 0x36: Outside Temperature
 static void raise_rcz_temperature_process() {
     int16_t temp_c = car_get_temp();
-    uint8_t data[1];
+    uint8_t data[1]; // LEN=2 -> 1 data byte
     data[0] = map_temp_to_rzc(temp_c);
     snd_raise_rcz_msg(RZC_DTYPE_OUTSIDE_TEMP, data, sizeof(data));
 }
 
 // DataType 0x33: Trip Page 0
 static void raise_rcz_trip0_process() {
-    uint8_t data[9] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // Default invalid
+    uint8_t data[11]; // LEN=12 -> 11 data bytes
+    memset(data, 0xFF, sizeof(data)); // Initialize all to invalid
 
     // Scale and format instantaneous consumption (L/100km * 10?) -> VERIFY TARGET UNIT/SCALING
-    uint16_t cons_scaled = car_get_inst_consumption_raw() / 10; // Example scaling
+    uint16_t inst_cons_raw = car_get_inst_consumption_raw();
+    uint16_t cons_scaled = 0xFFFF; // Default to invalid
+    if (inst_cons_raw != 0xFFFF) { // Assuming 0xFFFF indicates invalid raw value
+        // ASSUMPTION: Raw value from CAN (0x221) is L/100km * 100 or similar.
+        // We need L/100km * 10 for RZC. Divide by 10. Verify this assumption!
+        cons_scaled = inst_cons_raw / 10;
+        if (cons_scaled > 999) cons_scaled = 999; // Clamp to max reasonable value (99.9 L/100km)
+    }
     data[0] = (cons_scaled >> 8) & 0xFF;
     data[1] = cons_scaled & 0xFF;
+
     // Format range (KM)
     uint16_t range_km = car_get_range_km();
-    data[2] = (range_km >> 8) & 0xFF;
-    data[3] = range_km & 0xFF;
+    if (range_km != 0xFFFF) { // Assuming 0xFFFF indicates invalid range
+        data[2] = (range_km >> 8) & 0xFF;
+        data[3] = range_km & 0xFF;
+    } // else leave as FF FF
 
     // Data 4-5 (Set Destination) - Usually not sent by CANbox
     // Data 6-8 (Start/Stop Time) - Likely not applicable
+    // Data 9-10 - Unknown/Reserved
 
     snd_raise_rcz_msg(RZC_DTYPE_TRIP_PAGE0, data, sizeof(data));
 }
-// Placeholder functions for Trip 1 & 2 (Implement similarly when CAN IDs/Data are known)
+
+// Function for Trip 1 & 2
 static void raise_rcz_trip1_process() {
-     uint8_t data[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-     // TODO: Populate with carstate.avg_consumption1_raw, carstate.avg_speed1, carstate.trip_distance1
-     // after verifying scaling and formatting for RZC protocol (Bytes 0-1 = AvgCons, 2-3=AvgSpeed, 4-5=Dist)
-     snd_raise_rcz_msg(RZC_DTYPE_TRIP_PAGE1, data, sizeof(data));
+    uint8_t data[6]; // LEN=7 -> 6 data bytes
+    memset(data, 0xFF, sizeof(data)); // Initialize all to invalid
+
+    // Avg Cons 1 (L/100km * 10) - Assuming raw is *100
+    uint16_t avg_cons1_raw = car_get_avg_consumption1_raw();
+    uint16_t avg_cons1_scaled = (avg_cons1_raw == 0xFFFF) ? 0xFFFF : avg_cons1_raw / 10;
+    if (avg_cons1_scaled > 999) avg_cons1_scaled = 999; // Clamp
+    data[0] = (avg_cons1_scaled >> 8) & 0xFF;
+    data[1] = avg_cons1_scaled & 0xFF;
+
+    // Avg Speed 1 (km/h)
+    uint16_t avg_speed1 = car_get_avg_speed1(); // Already km/h
+    if (avg_speed1 != 0xFFFF) {
+        data[2] = (avg_speed1 >> 8) & 0xFF;
+        data[3] = avg_speed1 & 0xFF;
+    }
+
+    // Distance 1 (km)
+    uint32_t dist1_32 = car_get_trip_distance1(); // Already km (32-bit source)
+    uint16_t dist1 = 0xFFFF; // Default invalid
+    if (dist1_32 != 0xFFFFFFFF) { // Check if source is valid
+        dist1 = (dist1_32 > 0xFFFF) ? 0xFFFF : (uint16_t)dist1_32; // Clamp to 16-bit
+    }
+    data[4] = (dist1 >> 8) & 0xFF;
+    data[5] = dist1 & 0xFF;
+
+    snd_raise_rcz_msg(RZC_DTYPE_TRIP_PAGE1, data, sizeof(data));
 }
+
 static void raise_rcz_trip2_process() {
-     uint8_t data[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-     // TODO: Populate with carstate.avg_consumption2_raw, carstate.avg_speed2, carstate.trip_distance2
-     snd_raise_rcz_msg(RZC_DTYPE_TRIP_PAGE2, data, sizeof(data));
+    uint8_t data[6]; // LEN=7 -> 6 data bytes
+    memset(data, 0xFF, sizeof(data)); // Initialize all to invalid
+
+    // Avg Cons 2 (L/100km * 10) - Assuming raw is *100
+    uint16_t avg_cons2_raw = car_get_avg_consumption2_raw();
+    uint16_t avg_cons2_scaled = (avg_cons2_raw == 0xFFFF) ? 0xFFFF : avg_cons2_raw / 10;
+    if (avg_cons2_scaled > 999) avg_cons2_scaled = 999; // Clamp
+    data[0] = (avg_cons2_scaled >> 8) & 0xFF;
+    data[1] = avg_cons2_scaled & 0xFF;
+
+    // Avg Speed 2 (km/h)
+    uint16_t avg_speed2 = car_get_avg_speed2(); // Already km/h
+    if (avg_speed2 != 0xFFFF) {
+        data[2] = (avg_speed2 >> 8) & 0xFF;
+        data[3] = avg_speed2 & 0xFF;
+    }
+
+    // Distance 2 (km)
+    uint32_t dist2_32 = car_get_trip_distance2(); // Already km (32-bit source)
+    uint16_t dist2 = 0xFFFF; // Default invalid
+    if (dist2_32 != 0xFFFFFFFF) { // Check if source is valid
+        dist2 = (dist2_32 > 0xFFFF) ? 0xFFFF : (uint16_t)dist2_32; // Clamp to 16-bit
+    }
+    data[4] = (dist2 >> 8) & 0xFF;
+    data[5] = dist2 & 0xFF;
+
+    snd_raise_rcz_msg(RZC_DTYPE_TRIP_PAGE2, data, sizeof(data));
 }
 
 // Combine multiple sends into logical groups for canbox_process/park_process
@@ -281,8 +365,8 @@ static void raise_rcz_send_main_status() {
 
 static void raise_rcz_send_trip_info() {
     raise_rcz_trip0_process(); // Sends 0x33
-    raise_rcz_trip1_process(); // Sends 0x34 (with placeholder data for now)
-    raise_rcz_trip2_process(); // Sends 0x35 (with placeholder data for now)
+    raise_rcz_trip1_process(); // Sends 0x34
+    raise_rcz_trip2_process(); // Sends 0x35
 }
 
 
@@ -290,7 +374,7 @@ static void raise_rcz_send_trip_info() {
 
 // Helper to send RZC 0x02 Button Command
 static void send_raise_rcz_key(uint8_t rzc_key_code, uint8_t status) {
-    uint8_t data[3] = {0};
+    uint8_t data[3]; // LEN=4 -> 3 data bytes
     data[0] = rzc_key_code;
     data[1] = status; // 0x01 = Press, 0x00 = Release
     data[2] = 0x00;   // Reserved
@@ -335,9 +419,11 @@ static void raise_rcz_cmd_process(uint8_t ch) {
             break;
 
         case RX_RZC_LEN:
-            if (ch >= 1 && ch < (RX_RZC_BUFFER_SIZE - 2)) { // Min LEN=1 (DTYPE only), check buffer bounds
+            // Check buffer bounds: LEN=1 (DTYPE only) + 3 (HD,LEN,CS) = 4 bytes min frame.
+            // Max LEN = 1 + RZC_MAX_DATA_LEN. Max Frame = HD+LEN+DTYPE+DATA+CS = 3 + LEN.
+            if (ch >= 1 && (3 + ch) <= RX_RZC_BUFFER_SIZE) {
                 rx_len = ch;
-                rx_buffer[rx_idx++] = ch; // Store LEN
+                rx_buffer[rx_idx++] = ch; // Store LEN (at index 0 of payload buffer)
                 rx_state = RX_RZC_DTYPE;
             } else {
                 rx_state = RX_RZC_WAIT_START; // Invalid length
@@ -346,7 +432,7 @@ static void raise_rcz_cmd_process(uint8_t ch) {
 
         case RX_RZC_DTYPE:
             rx_dtype = ch;
-            rx_buffer[rx_idx++] = ch; // Store DTYPE
+            rx_buffer[rx_idx++] = ch; // Store DTYPE (at index 1 of payload buffer)
             if (rx_len == 1) { // Only DataType, no Data payload
                 rx_state = RX_RZC_CS;
             } else {
@@ -355,9 +441,10 @@ static void raise_rcz_cmd_process(uint8_t ch) {
             break;
 
         case RX_RZC_DATA:
-            rx_buffer[rx_idx++] = ch; // Store Data byte
-            // Check if we have received all expected data bytes (LEN - 1)
-            if (rx_idx >= (rx_len + 1)) { // +1 because buffer also holds LEN and DTYPE
+            rx_buffer[rx_idx++] = ch; // Store Data byte (starts at index 2 of payload buffer)
+            // Check if we have received all expected bytes (LEN + CS byte placeholder)
+            // We need LEN byte + DType byte + (LEN-1) Data bytes = LEN+1 bytes in buffer so far.
+            if (rx_idx >= (rx_len + 1)) {
                 rx_state = RX_RZC_CS;
             }
             break;
@@ -365,21 +452,22 @@ static void raise_rcz_cmd_process(uint8_t ch) {
         case RX_RZC_CS:
             {
                 uint8_t received_checksum = ch;
-                // Checksum includes LEN, DTYPE, and DATA (DATA size = rx_len - 1)
+                // Checksum includes LEN (rx_buffer[0]), DTYPE (rx_buffer[1]), and DATA (rx_buffer[2] to rx_buffer[rx_len])
+                // Data size = rx_len - 1
                 uint8_t calculated_checksum = raise_rcz_checksum(rx_dtype, rx_len, &rx_buffer[2], rx_len - 1);
 
                 if (calculated_checksum == received_checksum) {
                     // Checksum OK - Process command
-                     #ifdef DEBUG_MSG
+                     #ifdef DEBUG // Use the standard DEBUG definition
                      char dbg_buf[64];
                      snprintf(dbg_buf, sizeof(dbg_buf), "RZC RX OK: DType=0x%02X Len=%d\r\n", rx_dtype, rx_len);
                      hw_usart_write(hw_usart_get(), (uint8_t*)dbg_buf, strlen(dbg_buf));
                      #endif
                     // TODO: Add actual command handling based on rx_dtype
-                    // e.g., if (rx_dtype == RZC_DTYPE_TIME_SET) { handle_time_set(&rx_buffer[2], rx_len-1); }
+                    // For now, ignore payload as per strategy.
                 } else {
                     // Checksum Failed
-                     #ifdef DEBUG_MSG
+                     #ifdef DEBUG
                      char dbg_buf[64];
                      snprintf(dbg_buf, sizeof(dbg_buf), "RZC RX CS FAIL: DType=0x%02X Got=0x%02X Exp=0x%02X\r\n",
                               rx_dtype, received_checksum, calculated_checksum);
@@ -402,7 +490,7 @@ static void raise_rcz_cmd_process(uint8_t ch) {
 const protocol_ops_t raise_rcz_protocol_ops = {
     .radar_process = raise_rcz_radar_process, // Use 0x32 for simplicity
     .wheel_process = raise_rcz_wheel_process, // Use 0x29
-    .door_process = raise_rcz_vehicle_status_process, // Send 0x38 (includes doors)
+    .door_process = raise_rcz_send_main_status, // Send 0x38 (includes doors) and 0x36 (temp)
     .vehicle_info_process = raise_rcz_send_trip_info, // Send 0x33, 0x34, 0x35
     .ac_process = NULL, // No dedicated AC message function defined yet (0x21 is model specific) - could add to vehicle_status or implement 0x21
     .inc_volume = raise_rcz_inc_volume,       // Map to 0x02 + key code
