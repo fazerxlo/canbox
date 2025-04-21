@@ -24,8 +24,11 @@ static inline uint32_t get_be24(const uint8_t *buf) {
 }
 
 // --- Defines based on PSACANBridge analysis for 0x0B6 ---
-#define ID_0x0B6_RPM_BYTE_MSB       5
-#define ID_0x0B6_RPM_BYTE_LSB       6 // Note: PSACANBridge used get_be16(&data[5]), implying data[5]=MSB, data[6]=LSB
+#define ID_0x0B6_RPM_BYTE_MSB       0
+#define ID_0x0B6_RPM_BYTE_LSB       1 // Note: PSACANBridge used get_be16(&data[5]), implying data[5]=MSB, data[6]=LSB
+#define ID_0x0B6_ODOMETER_BYTE_MSB  4
+#define ID_0x0B6_ODOMETER_BYTE_LSB  5
+#define ID_0x0B6_SPEED_BYTE_MSB     2
 #define ID_0x0B6_COOLANT_BYTE       5 // From YAML, matches 0x0F6 coolant byte in PSACANBridge
 #define ID_0x0B6_COOLANT_INVALID    0xFF // Assume FF is invalid like oil temp
 #define ID_0x0B6_COOLANT_COLD_RAW   0x00 // Value seen in logs when likely cold
@@ -33,18 +36,18 @@ static inline uint32_t get_be24(const uint8_t *buf) {
 static void peugeot_407_ms_0B6_engine_status_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        // Reset states derived from this message on timeout
-        carstate.taho = 0; // Reset RPM
-        carstate.engine = 0; // Assume engine off if message stops
-        // Reset coolant temp to a safe/invalid value. Use the same logic as 0x161.
-        carstate.engine_temp = -48;
         return;
     }
 
-    // --- Decode Engine RPM ---
-    // Using Big Endian read (Byte 5 = MSB, Byte 6 = LSB) and divide by 4
-    uint16_t rpm_raw = get_be16(&msg[ID_0x0B6_RPM_BYTE_MSB]); // Reads msg[5] and msg[6]
-    carstate.taho = rpm_raw / 4;
+// --- Decode Engine RPM (Based on autowp structure and Factor 8) ---
+    // Extract the 11-bit raw value from Bytes 0 and 1
+    // Raw = (Byte0 << 3) | (Byte1 >> 5)
+    uint16_t rpm_raw = get_be16(&msg[ID_0x0B6_RPM_BYTE_MSB]);
+    
+   // rpm_raw = (rpm_raw << 3) & 0x7FF; // Ensure we only consider the 11 bits
+
+    // Apply the experimentally determined factor of 8
+    carstate.taho = rpm_raw / 8;
 
     // Update engine running state based on RPM
     // Threshold might need adjustment based on idle speed. 500 is common.
@@ -70,7 +73,11 @@ static void peugeot_407_ms_0B6_engine_status_handler(const uint8_t * msg, struct
         carstate.engine_temp = (int16_t)(((float)coolant_raw * 0.75f) - 48.0f);
     }
 
-    // We are ignoring Speed, Ignition, and Illumination from this message ID based on analysis.
+    //Speed, Ignition, and Illumination from this message ID based on analysis.
+
+    uint16_t speed_raw = get_be16(&msg[ID_0x0B6_SPEED_BYTE_MSB]);
+    carstate.speed = (uint16_t)((float)speed_raw * 0.01f);
+
 }
 
 
@@ -111,18 +118,18 @@ static void peugeot_407_ms_036_ign_light_handler(const uint8_t * msg, struct msg
     // --- Update Ignition/ACC State ---
     switch (current_state.raw_ign_state) {
         case ID_0x036_IGN_STATE_ON:
-        case ID_0x036_IGN_STATE_CRANKING: // Treat cranking as IGN ON for HU power
             carstate.ign = 1;
             carstate.acc = 1;
             break;
         case ID_0x036_IGN_STATE_ACC:
-            carstate.ign = STATE_UNDEF;
+        case ID_0x036_IGN_STATE_CRANKING:
+            carstate.ign = 0;
             carstate.acc = 1;
             break;
         case ID_0x036_IGN_STATE_OFF:
         default: // Treat unknown states as OFF
-            carstate.ign = STATE_UNDEF;
-            carstate.acc = STATE_UNDEF;
+            carstate.ign = 0;
+            carstate.acc = 0;
             break;
     }
 
@@ -134,32 +141,26 @@ static void peugeot_407_ms_036_ign_light_handler(const uint8_t * msg, struct msg
 
 
 // --- Defines based on verified 0x0F6 log data ---
-#define ID_0x0F6_BYTE0                  0
-#define ID_0x0F6_REVERSE_MASK           0x08 // VERIFY THIS BIT! (Log shows bit 3, docs say bit 2)
+#define ID_0x0F6_REVERSE_BYTE           7
+#define ID_0x0F6_REVERSE_MASK           0x80
 #define ID_0x0F6_TURN_LEFT_MASK         0x01 // Needs verification with logs
 #define ID_0x0F6_TURN_RIGHT_MASK        0x02 // Needs verification with logs
 #define ID_0x0F6_IGNITION_ON_MASK       0x80 // Bit 7 confirms IGN is ON
 
-#define ID_0x0F6_AMBIENT_TEMP_BYTE      3
+#define ID_0x0F6_ODOMETER_BYTE      2
+#define ID_0x0F6_AMBIENT_TEMP_BYTE      6
 
 static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        // Reset states derived *only* from this message if they timeout
-        carstate.selector = STATE_UNDEF;
-        // Keep carstate.selector based on its primary source message if it exists
-        carstate.temp = -40; // Reset ambient temp to minimum possible
-        // Reset turn signal indicators if you add them later
         return;
     }
 
     // --- Decode Reverse Gear Status (VERIFY MASK!) ---
-    if (msg[ID_0x0F6_BYTE0] & ID_0x0F6_REVERSE_MASK) {
+    if (msg[ID_0x0F6_REVERSE_BYTE] & ID_0x0F6_REVERSE_MASK) {
         carstate.selector = e_selector_r;
     } else {
-        if (carstate.selector == e_selector_r) {
-            carstate.selector = e_selector_p; // Or undef/last known non-reverse state
-        }
+        carstate.selector = e_selector_d; // Or undef/last known non-reverse state
     }
 
     // --- Decode Ambient Temperature ---
@@ -173,28 +174,22 @@ static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_de
     }
 
 
-    // --- TODO: Decode Turn Signals (when logs are available) ---
-    // uint8_t left_ts = (msg[ID_0x0F6_BYTE0] & ID_0x0F6_TURN_LEFT_MASK);
-    // uint8_t right_ts = (msg[ID_0x0F6_BYTE0] & ID_0x0F6_TURN_RIGHT_MASK);
-    // Update carstate or trigger callbacks/protocol messages as needed
+    //Odometer
 
-    // We don't update carstate.ign here, assuming 0x036 is the primary source.
-    // We ignore coolant temp and odometer from this message based on analysis.
+    uint32_t odometer_raw = get_be24(&msg[ID_0x0F6_ODOMETER_BYTE]);
+    carstate.odometer = odometer_raw/10;
+
 }
 
 // --- Defines based on PSACANBridge code for 0x128 ---
-#define ID_0x128_LIGHT_BYTE         5
-#define ID_0x128_PARK_LIGHT_MASK    0x80 // Bit 7: Sidelights/Parking Lights
+#define ID_0x128_PARK_LIGHT_BYTE    0
+#define ID_0x128_PARK_LIGHT_MASK    0x20 // Bit 5: Sidelights/Parking Lights
+
+#define ID_0x128_NEAR_LIGHT_BYTE    4
 #define ID_0x128_NEAR_LIGHT_MASK    0x40 // Bit 6: Low Beam/Near Lights
-// Add other light masks if needed later:
-// #define ID_0x128_HIGH_BEAM_MASK     0x20
-// #define ID_0x128_FRONT_FOG_MASK     0x10
-// #define ID_0x128_REAR_FOG_MASK      0x08
-// #define ID_0x128_TURN_RIGHT_MASK    0x04
-// #define ID_0x128_TURN_LEFT_MASK     0x02
 
 #define ID_0x128_STATUS_BYTE        7
-#define ID_0x128_SEATBELT_MASK      0x80 // Bit 7: Driver Seatbelt Warning Light (1 = Warning/Unfastened?)
+#define ID_0x128_SEATBELT_MASK      0x80 // Bit 8: Driver Seatbelt Warning Light (1 = Warning/Unfastened?)
 #define ID_0x128_PARK_BRAKE_MASK    0x40 // Bit 6: Parking Brake Light ON
 
 #define ID_0x128_FUEL_BYTE          4
@@ -205,36 +200,12 @@ static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_de
 static void peugeot_407_ms_128_lights_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        // Reset states derived *reliably* from this message
-        carstate.park_lights = 0; // Assume OFF
-        carstate.near_lights = 0; // Assume OFF
-        // Optionally reset warning light states if this is the primary source
-        // carstate.park_break_light_on = 0; // If storing light status separately
-        // carstate.ds_belt_warning_on = 0; // If storing light status separately
         return;
     }
 
     // --- Decode Light Status ---
-    carstate.park_lights = (msg[ID_0x128_LIGHT_BYTE] & ID_0x128_PARK_LIGHT_MASK) ? 1 : 0;
-    carstate.near_lights = (msg[ID_0x128_LIGHT_BYTE] & ID_0x128_NEAR_LIGHT_MASK) ? 1 : 0;
-    // TODO: Decode other lights if needed for advanced features
-
-    // --- Decode Status Indicators (Warning Lights) ---
-    // These reflect the *light on the dashboard*, not necessarily the underlying state.
-    // It's usually better to get park brake state from a dedicated sensor message if possible.
-    // Update carstate.park_break ONLY if this is confirmed as the primary source.
-    // For now, let's assume a dedicated message OR 0x131 provides primary park brake state.
-    // bool park_brake_light_on = (msg[ID_0x128_STATUS_BYTE] & ID_0x128_PARK_BRAKE_MASK);
-
-    // Update carstate.ds_belt based on the warning light. Assume 1=Unfastened.
-    // Verify if 0 means fastened or just light off.
-    carstate.ds_belt = (msg[ID_0x128_STATUS_BYTE] & ID_0x128_SEATBELT_MASK) ? 1 : 0;
-
-    // --- Decode Low Fuel Warning Light ---
-    // This reflects the dashboard light. Use the calculated percentage for actual state.
-    // bool low_fuel_light_on = (msg[ID_0x128_FUEL_BYTE] & ID_0x128_LOW_FUEL_MASK);
-    // You could store this in a separate carstate variable if needed by the HU protocol.
-    // carstate.low_fuel_warning_light = low_fuel_light_on;
+    carstate.park_lights = (msg[ID_0x128_PARK_LIGHT_BYTE] & ID_0x128_PARK_LIGHT_MASK) ? 1 : 0;
+    carstate.near_lights = (msg[ID_0x128_NEAR_LIGHT_BYTE] & ID_0x128_NEAR_LIGHT_MASK) ? 1 : 0;
 
 }
 
@@ -383,7 +354,7 @@ static void peugeot_407_ms_vin_2B6_handler(const uint8_t *msg, struct msg_desc_t
 
 
 // Handler for 0x28C (Primary source for Speed, potential Odometer)
-static void peugeot_407_ms_28C_speed_odo_handler(const uint8_t * msg, struct msg_desc_t * desc)
+static void peugeot_407_ms_14C_speed_odo_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
         // Reset states on timeout
@@ -440,32 +411,8 @@ static void peugeot_407_ms_131_doors_fuel_handler(const uint8_t * msg, struct ms
 static void peugeot_407_ms_168_temp_battery_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        // Reset states on timeout
-        carstate.temp = AMBIENT_TEMP_MIN; // Reset to min possible value
-        carstate.voltage = 0; // Reset voltage
-        // Reset low_voltage status if primarily determined here
-        // carstate.low_voltage = STATE_UNDEF;
         return;
     }
-
-    // --- Decode Outside Ambient Temperature ---
-    // Using formula from PSACANBridge: (RAW * 0.5) - 40.0
-    uint8_t temp_raw = msg[ID_0x168_TEMP_BYTE];
-    if (temp_raw != ID_0x168_INVALID_TEMP_RAW) { // Check for invalid raw value
-        // Calculate using float, then store as int16_t
-        float temp_calculated = ((float)temp_raw * 0.5f) - 40.0f;
-        // Optional: Add range check if needed
-        // if (temp_calculated >= AMBIENT_TEMP_MIN && temp_calculated <= AMBIENT_TEMP_MAX) {
-             carstate.temp = (int16_t)temp_calculated;
-        // } else { // Handle out-of-range calculated value }
-    } else {
-        // Handle invalid raw reading - keep last known good value? Or set to min?
-        // Let's keep the last valid value for temp unless it's still the initial state
-        if (carstate.temp == 0) { // Or check against AMBIENT_TEMP_MIN if that's default invalid
-            carstate.temp = AMBIENT_TEMP_MIN;
-        }
-    }
-
 
     // --- Decode Battery Voltage ---
     // Using formula from PSACANBridge: (RAW * 0.05) + 5.0
@@ -821,7 +768,7 @@ static struct msg_desc_t peugeot_407_ms[] =
     { 0x161,    100, 0, 0, peugeot_407_ms_161_temp_handler },
 
 
-    { 0x28C,    100, 0, 0, peugeot_407_ms_28C_speed_odo_handler },
+    //{ 0x14C,    100, 0, 0, peugeot_407_ms_14C_speed_odo_handler },
     { 0x168,   1000, 0, 0, peugeot_407_ms_168_temp_battery_handler },
 
     { 0x1D0,    100, 0, 0, peugeot_407_ms_1D0_climate_handler },

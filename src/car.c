@@ -744,10 +744,45 @@ uint16_t car_get_engine_temp(void) {
     return carstate.engine_temp;
 }
 
+uint16_t car_get_oil_temp(void) {
+    return carstate.oil_temp;
+}
+
+
 uint16_t car_get_inst_consumption_raw(void) {
     return carstate.inst_consumption_raw;
 }
 
 uint16_t car_get_range_km(void) {
     return carstate.range_km;
+}
+
+uint32_t car_get_avg_speed1(void)
+{
+    return carstate.avg_speed1;
+}
+
+uint16_t car_get_avg_consumption1_raw(void)
+{
+    return carstate.avg_consumption1_raw;
+}
+
+uint32_t car_get_trip_distance1(void)
+{
+    return carstate.trip_distance1;
+}
+
+uint32_t car_get_avg_speed2(void)
+{
+    return carstate.avg_speed2;
+}
+
+uint16_t car_get_avg_consumption2_raw(void)
+{
+    return carstate.avg_consumption2_raw;
+}
+
+uint32_t car_get_trip_distance2(void)
+{
+    return carstate.trip_distance2;
 }
