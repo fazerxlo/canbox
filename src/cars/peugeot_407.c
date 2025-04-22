@@ -380,10 +380,6 @@ static void peugeot_407_ms_14C_speed_odo_handler(const uint8_t * msg, struct msg
 static void peugeot_407_ms_131_doors_fuel_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        carstate.fl_door = STATE_UNDEF;
-        carstate.fr_door = STATE_UNDEF;
-        carstate.rl_door = STATE_UNDEF;
-        carstate.rr_door = STATE_UNDEF;
         return;
     }
 
@@ -664,6 +660,34 @@ static void peugeot_407_ms_161_temp_handler(const uint8_t * msg, struct msg_desc
     }
 }
 
+// Handler for CAN ID 0x220 (Alternative Door Status?)
+// NOTE: Documentation for 0x220 bit layout is ambiguous (PSACAN.md).
+// This implementation ASSUMES a layout similar to 0x131 (Byte 1, Bits 0-5)
+// for FL, FR, RL, RR, Bonnet, Tailgate respectively, as this is a common PSA pattern.
+// THIS REQUIRES VERIFICATION WITH ACTUAL CAN LOGS for the Peugeot 407.
+// The 0x131 handler is currently considered the primary verified source for door status.
+static void peugeot_407_ms_220_door_handler(const uint8_t * msg, struct msg_desc_t * desc)
+{
+    if (is_timeout(desc)) {
+        return;
+    }
+
+    //Byte 0 holds the door status bits
+    uint8_t door_byte = msg[0];
+
+    // Update carstate. Since 0x131 is already doing this reliably,
+    // you might comment these out unless logs show 0x220 is needed or
+    // provides different information (e.g., locking status in other bits).
+    // For now, we'll update, potentially overwriting 0x131's update if 0x220 arrives later.
+    carstate.fl_door = (door_byte & 0x80) ? 1 : 0;
+    carstate.fr_door = (door_byte & 0x40) ? 1 : 0;
+    carstate.rl_door = (door_byte & 0x20) ? 1 : 0;
+    carstate.rr_door = (door_byte & 0x10) ? 1 : 0;
+    // Bonnet/Tailgate bits are assumptions based on matching 0x131 structure
+    //carstate.bonnet = (door_byte & 0x8) ? 1 : 0;   // ASSUMPTION for bit 4 - VERIFY
+    carstate.tailgate = (door_byte & 0x8) ? 1 : 0; // ASSUMPTION for bit 5 - VERIFY
+}
+
 // --- Defines based on PSACAN.md/PSACANBridge for 0x221 ---
 #define ID_0x221_CONS_BYTE_MSB       4
 #define ID_0x221_CONS_BYTE_LSB       5
@@ -757,13 +781,14 @@ static struct msg_desc_t peugeot_407_ms[] =
     { 0x0B6,    50, 0, 0, peugeot_407_ms_0B6_engine_status_handler },
     { 0x0F6,    100, 0, 0, peugeot_407_ms_0F6_status_handler }, 
     { 0x128,    100, 0, 0, peugeot_407_ms_128_lights_handler },
+    { 0x220,    100, 0, 0, peugeot_407_ms_220_door_handler },
     { 0x21F,    100, 0, 0, peugeot_407_ms_21F_swc_handler },
 
     { 0x336,   1000, 0, 0, peugeot_407_ms_vin_336_handler },
     { 0x3B6,   1000, 0, 0, peugeot_407_ms_vin_3B6_handler },
     { 0x2B6,   1000, 0, 0, peugeot_407_ms_vin_2B6_handler },
 
-    { 0x131,    100, 0, 0, peugeot_407_ms_131_doors_fuel_handler },
+    // { 0x131,    100, 0, 0, peugeot_407_ms_131_doors_fuel_handler },
     { 0x0E1,    100, 0, 0, peugeot_407_ms_0E1_parktronic_handler },
     { 0x161,    100, 0, 0, peugeot_407_ms_161_temp_handler },
 
