@@ -25,9 +25,6 @@ static inline uint32_t get_be24(const uint8_t *buf) {
 
 // --- Defines based on PSACANBridge analysis for 0x0B6 ---
 #define ID_0x0B6_RPM_BYTE_MSB       0
-#define ID_0x0B6_RPM_BYTE_LSB       1 // Note: PSACANBridge used get_be16(&data[5]), implying data[5]=MSB, data[6]=LSB
-#define ID_0x0B6_ODOMETER_BYTE_MSB  4
-#define ID_0x0B6_ODOMETER_BYTE_LSB  5
 #define ID_0x0B6_SPEED_BYTE_MSB     2
 #define ID_0x0B6_COOLANT_BYTE       5 // From YAML, matches 0x0F6 coolant byte in PSACANBridge
 #define ID_0x0B6_COOLANT_INVALID    0xFF // Assume FF is invalid like oil temp
@@ -39,12 +36,7 @@ static void peugeot_407_ms_0B6_engine_status_handler(const uint8_t * msg, struct
         return;
     }
 
-// --- Decode Engine RPM (Based on autowp structure and Factor 8) ---
-    // Extract the 11-bit raw value from Bytes 0 and 1
-    // Raw = (Byte0 << 3) | (Byte1 >> 5)
     uint16_t rpm_raw = get_be16(&msg[ID_0x0B6_RPM_BYTE_MSB]);
-    
-   // rpm_raw = (rpm_raw << 3) & 0x7FF; // Ensure we only consider the 11 bits
 
     // Apply the experimentally determined factor of 8
     carstate.taho = rpm_raw / 8;
@@ -58,7 +50,6 @@ static void peugeot_407_ms_0B6_engine_status_handler(const uint8_t * msg, struct
     }
 
     // --- Decode Engine Coolant Temperature ---
-    // Using formula from YAML: (RAW * 0.75) - 48.0
     uint8_t coolant_raw = msg[ID_0x0B6_COOLANT_BYTE]; // Using Byte 5 as per YAML
 
     // Check for potentially invalid readings (like 0xFF or the 0x00 seen in logs)
@@ -70,7 +61,7 @@ static void peugeot_407_ms_0B6_engine_status_handler(const uint8_t * msg, struct
          }
          // Otherwise, hold the last known good temperature during brief invalid readings
     } else {
-        carstate.engine_temp = (int16_t)(((float)coolant_raw * 0.75f) - 48.0f);
+        carstate.engine_temp = (int16_t)(((float)coolant_raw * 0.75f) - 48);
     }
 
     //Speed, Ignition, and Illumination from this message ID based on analysis.
@@ -93,30 +84,18 @@ static void peugeot_407_ms_0B6_engine_status_handler(const uint8_t * msg, struct
 #define ID_0x036_LIGHT_ENABLE_MASK      0x20 // Bit 5: Dashboard lighting enabled
 #define ID_0x036_LIGHT_BRIGHTNESS_MASK  0x0F // Bits 0-3: Brightness level (0-15)
 
-// Structure to hold decoded state from 0x036 for clarity elsewhere
-typedef struct {
-    uint8_t raw_ign_state;
-    bool lights_enabled;
-    uint8_t brightness;
-} state_0x036_t;
-
 static void peugeot_407_ms_036_ign_light_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        carstate.ign = STATE_UNDEF;
-        carstate.acc = STATE_UNDEF;
-        carstate.illum = 0; // Brightness level
         return;
     }
 
     // Decode current message
-    state_0x036_t current_state;
-    current_state.raw_ign_state = msg[ID_0x036_IGN_STATE_BYTE] & ID_0x036_IGN_STATE_MASK;
-    current_state.lights_enabled = (msg[ID_0x036_LIGHT_BYTE] & ID_0x036_LIGHT_ENABLE_MASK);
-    current_state.brightness = msg[ID_0x036_LIGHT_BYTE] & ID_0x036_LIGHT_BRIGHTNESS_MASK;
+    uint8_t raw_ign_state = msg[ID_0x036_IGN_STATE_BYTE] & ID_0x036_IGN_STATE_MASK;
+    uint8_t brightness = msg[ID_0x036_LIGHT_BYTE] & ID_0x036_LIGHT_BRIGHTNESS_MASK;
 
     // --- Update Ignition/ACC State ---
-    switch (current_state.raw_ign_state) {
+    switch (raw_ign_state) {
         case ID_0x036_IGN_STATE_ON:
             carstate.ign = 1;
             carstate.acc = 1;
@@ -135,7 +114,7 @@ static void peugeot_407_ms_036_ign_light_handler(const uint8_t * msg, struct msg
 
     // --- Update Illumination State ---
     // Store the brightness level (0-15)
-    carstate.illum = current_state.brightness;
+    carstate.illum = brightness;
 }
 
 
@@ -143,9 +122,8 @@ static void peugeot_407_ms_036_ign_light_handler(const uint8_t * msg, struct msg
 // --- Defines based on verified 0x0F6 log data ---
 #define ID_0x0F6_REVERSE_BYTE           7
 #define ID_0x0F6_REVERSE_MASK           0x80
-#define ID_0x0F6_TURN_LEFT_MASK         0x01 // Needs verification with logs
-#define ID_0x0F6_TURN_RIGHT_MASK        0x02 // Needs verification with logs
-#define ID_0x0F6_IGNITION_ON_MASK       0x80 // Bit 7 confirms IGN is ON
+
+#define ID_0x0F6_COOLANT_BYTE           1
 
 #define ID_0x0F6_ODOMETER_BYTE      2
 #define ID_0x0F6_AMBIENT_TEMP_BYTE      6
@@ -160,7 +138,7 @@ static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_de
     if (msg[ID_0x0F6_REVERSE_BYTE] & ID_0x0F6_REVERSE_MASK) {
         carstate.selector = e_selector_r;
     } else {
-        carstate.selector = e_selector_d; // Or undef/last known non-reverse state
+        carstate.selector = e_selector_n;
     }
 
     // --- Decode Ambient Temperature ---
@@ -179,22 +157,24 @@ static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_de
     uint32_t odometer_raw = get_be24(&msg[ID_0x0F6_ODOMETER_BYTE]);
     carstate.odometer = odometer_raw/10;
 
+    uint8_t coolant_temp_raw = msg[ID_0x0F6_COOLANT_BYTE];
+    carstate.engine_temp = (int16_t)(((float)coolant_temp_raw) - 40.0f);
+
+
+    
+
 }
 
 // --- Defines based on PSACANBridge code for 0x128 ---
 #define ID_0x128_BYTE0    0
 #define ID_0x128_PARK_LIGHT_MASK    0x20 // Bit 5: Sidelights/Parking Lights
 #define ID_0x128_SEATBELT_MASK      0x40 // Bit 8: Driver Seatbelt Warning Light (1 = Warning/Unfastened?)
+#define ID_0x128_LOW_FUEL_MASK      0x10 // Bit 4: Low Fuel Warning Light
 
 #define ID_0x128_NEAR_LIGHT_BYTE    4
 #define ID_0x128_NEAR_LIGHT_MASK    0x40 // Bit 6: Low Beam/Near Lights
 
-#define ID_0x128_STATUS_BYTE        7
 
-#define ID_0x128_PARK_BRAKE_MASK    0x40 // Bit 6: Parking Brake Light ON
-
-#define ID_0x128_FUEL_BYTE          4
-#define ID_0x128_LOW_FUEL_MASK      0x01 // Bit 0: Low Fuel Warning Light
 
 // This handler primarily updates light statuses and potentially warning light statuses.
 // Prefer dedicated messages for primary state of Park Brake if available.
@@ -209,7 +189,7 @@ static void peugeot_407_ms_128_lights_handler(const uint8_t * msg, struct msg_de
     carstate.near_lights = (msg[ID_0x128_NEAR_LIGHT_BYTE] & ID_0x128_NEAR_LIGHT_MASK) ? 1 : 0;
     carstate.park_break = (msg[ID_0x128_BYTE0] & ID_0x128_PARK_LIGHT_MASK) ? 1 : 0;
     carstate.ds_belt = (msg[ID_0x128_BYTE0] & ID_0x128_SEATBELT_MASK) ? 1 : 0;
-    carstate.low_fuel_lvl = (msg[ID_0x128_FUEL_BYTE] & ID_0x128_LOW_FUEL_MASK) ? 1 : 0;
+    carstate.low_fuel_lvl = (msg[ID_0x128_BYTE0] & ID_0x128_LOW_FUEL_MASK) ? 1 : 0;
 
 }
 
@@ -525,17 +505,53 @@ static void peugeot_407_ms_1D0_climate_handler(const uint8_t * msg, struct msg_d
 
 // --- Defines based on PSACANBridge/PSACAN.md code for 0x0E1 ---
 #define ID_0x0E1_DISPLAY_ACTIVE_BYTE    5
-#define ID_0x0E1_DISPLAY_ACTIVE_MASK    0x01 // Bit 0
+#define ID_0x0E1_DISPLAY_ACTIVE_MASK    0x02 // Bit 0
 
 #define ID_0x0E1_ZONE_ACTIVE_BYTE       1
 #define ID_0x0E1_FRONT_ACTIVE_MASK      0x10 // Bit 4
 #define ID_0x0E1_REAR_ACTIVE_MASK       0x40 // Bit 6
 // #define ID_0x0E1_BOTH_ACTIVE_MASK    0x20 // Bit 5 - Verify if needed
 
-#define ID_0x0E1_REAR_SENSORS_BYTE_A    2
-#define ID_0x0E1_REAR_SENSORS_BYTE_B    3
-#define ID_0x0E1_FRONT_SENSORS_BYTE_A   3
-#define ID_0x0E1_FRONT_SENSORS_BYTE_B   4
+#define ID_0x0E1_SENSORS_BYTE_A    3
+#define ID_0x0E1_SENSORS_BYTE_B    4
+#define ID_0x0E1_SENSORS_BYTE_C    5
+
+
+uint8_t get_radar_center(uint8_t input) {
+    // Define the lookup table (LUT) based on the provided mapping
+    // Index corresponds to the decimal input value (0-7)
+    static const uint8_t radar_center_lut[] = {
+        4, // Input 0 (000)
+        3, // Input 1 (001)
+        3, // Input 2 (010)
+        2, // Input 3 (011)
+        2, // Input 4 (100)
+        1, // Input 5 (101)
+        1, // Input 6 (110)
+        0  // Input 7 (111)
+    };
+
+    // Return the value from the lookup table using the input as the index
+    return radar_center_lut[input & 0x07];
+}
+
+uint8_t get_radar_side(uint8_t input) {
+    // Define the lookup table (LUT) based on the provided mapping
+    // Index corresponds to the decimal input value (0-7)
+    static const uint8_t radar_side_lut[] = {
+        3, // Input 0 (000)
+        2, // Input 1 (001)
+        2, // Input 2 (010)
+        1, // Input 3 (011)
+        1, // Input 4 (100)
+        0, // Input 5 (101)
+        0, // Input 6 (110)
+        0  // Input 7 (111)
+    };
+
+    // Return the value from the lookup table using the input as the index
+    return radar_side_lut[input & 0x07];
+}
 
 static void peugeot_407_ms_0E1_parktronic_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
@@ -547,8 +563,6 @@ static void peugeot_407_ms_0E1_parktronic_handler(const uint8_t * msg, struct ms
     };
 
     if (is_timeout(desc)) {
-        // Reset radar state on timeout
-        memcpy(&carstate.radar, &inactive_radar, sizeof(radar_t));
         return;
     }
 
@@ -563,9 +577,31 @@ static void peugeot_407_ms_0E1_parktronic_handler(const uint8_t * msg, struct ms
         return;
     }
 
+    // --- Decode Sensor Distances (0=Closest, 7=Farthest) ---
+    // Rear Sensors
+    carstate.radar.rl  = get_radar_side((msg[ID_0x0E1_SENSORS_BYTE_A] >> 5));
+    carstate.radar.rlm = get_radar_center((msg[ID_0x0E1_SENSORS_BYTE_A] >> 2));
+    carstate.radar.rrm = carstate.radar.rlm;
+    carstate.radar.rr  = get_radar_side((msg[ID_0x0E1_SENSORS_BYTE_B] >> 5));
+
+    // Front Sensors
+    carstate.radar.fl  = get_radar_side((msg[ID_0x0E1_SENSORS_BYTE_B] >> 2));
+    carstate.radar.flm = get_radar_center((msg[ID_0x0E1_SENSORS_BYTE_C] >> 5));
+    carstate.radar.frm = carstate.radar.flm;
+    carstate.radar.fr  = get_radar_side((msg[ID_0x0E1_SENSORS_BYTE_C] >> 2));
+
+
     // --- Determine Active Zones ---
-    bool front_active = (msg[ID_0x0E1_ZONE_ACTIVE_BYTE] & ID_0x0E1_FRONT_ACTIVE_MASK);
-    bool rear_active = (msg[ID_0x0E1_ZONE_ACTIVE_BYTE] & ID_0x0E1_REAR_ACTIVE_MASK);
+    bool front_active = (
+        carstate.radar.fl != 7 || 
+        carstate.radar.flm != 7 || 
+        carstate.radar.frm != 7 || 
+        carstate.radar.fr != 7);
+    bool rear_active = (
+        carstate.radar.rl != 7 || 
+        carstate.radar.rlm != 7 || 
+        carstate.radar.rrm != 7 || 
+        carstate.radar.rr != 7);
 
     if (front_active && rear_active) {
         carstate.radar.state = e_radar_on; // Both active
@@ -576,47 +612,21 @@ static void peugeot_407_ms_0E1_parktronic_handler(const uint8_t * msg, struct ms
     } else {
         // If display is active but neither zone flag is set? Default to OFF or a specific state?
         // Let's assume OFF if no zone is explicitly active, even if display_active is true.
-         memcpy(&carstate.radar, &inactive_radar, sizeof(radar_t));
-         return; // Exit if no zones active
+            memcpy(&carstate.radar, &inactive_radar, sizeof(radar_t));
+            return; // Exit if no zones active
     }
 
-    // --- Decode Sensor Distances (0=Closest, 7=Farthest) ---
-    // Rear Sensors
-    carstate.radar.rl  = (msg[ID_0x0E1_REAR_SENSORS_BYTE_A] >> 5) & 0x07;
-    carstate.radar.rlm = (msg[ID_0x0E1_REAR_SENSORS_BYTE_A] >> 2) & 0x07;
-    carstate.radar.rrm = ((msg[ID_0x0E1_REAR_SENSORS_BYTE_A] << 1) & 0x06) | ((msg[ID_0x0E1_REAR_SENSORS_BYTE_B] >> 7) & 0x01);
-    carstate.radar.rr  = (msg[ID_0x0E1_REAR_SENSORS_BYTE_B] >> 4) & 0x07;
 
-    // Front Sensors
-    carstate.radar.fl  = (msg[ID_0x0E1_FRONT_SENSORS_BYTE_A] >> 1) & 0x07;
-    carstate.radar.flm = ((msg[ID_0x0E1_FRONT_SENSORS_BYTE_A] << 2) & 0x04) | ((msg[ID_0x0E1_FRONT_SENSORS_BYTE_B] >> 6) & 0x03);
-    carstate.radar.frm = (msg[ID_0x0E1_FRONT_SENSORS_BYTE_B] >> 3) & 0x07;
-    carstate.radar.fr  = msg[ID_0x0E1_FRONT_SENSORS_BYTE_B] & 0x07;
-
-    // Safety check: If only rear is active, potentially zero out front distances?
-    // Or rely on the Hiworld mapping function to handle 0xFF correctly?
-    // Let's keep raw values for now and let mapping handle it.
-    if (carstate.radar.state == e_radar_on_rear) {
-       carstate.radar.fl = 7; carstate.radar.flm = 7; carstate.radar.frm = 7; carstate.radar.fr = 7;
-    } else if (carstate.radar.state == e_radar_on_front) {
-       carstate.radar.rl = 7; carstate.radar.rlm = 7; carstate.radar.rrm = 7; carstate.radar.rr = 7;
-    }
 }
 
 // --- Defines based on PSACANBridge code for 0x161 ---
 #define ID_0x161_OIL_TEMP_BYTE      2
-#define ID_0x161_FUEL_CALC_BYTE     3
+#define ID_0x161_FUEL_BYTE     3
 #define ID_0x161_OIL_TEMP_INVALID   0xFF // Value observed indicating invalid/not ready temp
 
 static void peugeot_407_ms_161_temp_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        // Reset states derived from this message on timeout
-        carstate.oil_temp = -40; // Reset oil temp to its minimum possible value based on offset
-        // Fuel level percentage is calculated here, so maybe set it to 0 or STATE_UNDEF on timeout?
-        // Let's set to 0, assuming empty on timeout might be safer.
-        carstate.fuel_lvl = 0;
-        carstate.low_fuel_lvl = STATE_UNDEF; // Low fuel status unknown on timeout
         return;
     }
 
@@ -624,7 +634,7 @@ static void peugeot_407_ms_161_temp_handler(const uint8_t * msg, struct msg_desc
     uint8_t oil_temp_raw = msg[ID_0x161_OIL_TEMP_BYTE];
     if (oil_temp_raw != ID_0x161_OIL_TEMP_INVALID) {
         // Apply offset: Temp = RAW + 40
-        carstate.oil_temp = (int16_t)oil_temp_raw + 40;
+        carstate.oil_temp = (int16_t)oil_temp_raw - 40;
     } else {
         // Keep previous value or set to a specific "invalid" marker?
         // Let's keep the previous valid value unless it's the initial state.
@@ -635,34 +645,16 @@ static void peugeot_407_ms_161_temp_handler(const uint8_t * msg, struct msg_desc
     }
 
     // --- Calculate Fuel Level Percentage ---
-    uint8_t fuel_calc_byte = msg[ID_0x161_FUEL_CALC_BYTE];
-    uint8_t fuel_level_bits = (fuel_calc_byte >> 2) & 0x3F; // Lower 6 bits = level
-    uint8_t max_fuel_bits   = (fuel_calc_byte >> 1) & 0x7F; // 7 bits = max capacity representation
-
-    if (max_fuel_bits != 0) {
-        // Calculate percentage (using 32-bit intermediate to avoid overflow)
-        uint8_t fuel_percent = (uint8_t)(((uint32_t)fuel_level_bits * 100) / max_fuel_bits);
-
-        // Clamp the value to 0-100%
-        if (fuel_percent > 100) {
-            fuel_percent = 100;
-        }
-        carstate.fuel_lvl = fuel_percent;
-
-        // Update low fuel level warning based on percentage
-        // Threshold might need adjustment (e.g., 10% or 12%)
-        if (carstate.fuel_lvl <= 10) { // Example: Low fuel below 10%
-            carstate.low_fuel_lvl = 1;
-        } else {
-            carstate.low_fuel_lvl = 0;
-        }
-    } else {
-        // Max fuel is 0, calculation invalid - maybe sensor not ready?
-        // Keep previous value or set to 0? Let's set to 0.
-        carstate.fuel_lvl = 0;
-        carstate.low_fuel_lvl = STATE_UNDEF; // Status unknown if calc is invalid
-    }
+    uint8_t fuel_raw = msg[ID_0x161_FUEL_BYTE];
+    carstate.fuel_lvl = fuel_raw;
 }
+
+#define ID_0x_220_DOOR_BYTE     0
+#define ID_0x_220_FL_DOOR_MASK  0x80 // Bit 7
+#define ID_0x_220_FR_DOOR_MASK  0x40 // Bit 6
+#define ID_0x_220_RL_DOOR_MASK  0x20 // Bit 5
+#define ID_0x_220_RR_DOOR_MASK  0x10 // Bit 4
+#define ID_0x_220_TAILGATE_MASK 0x8  // Bit 2
 
 // Handler for CAN ID 0x220 (Alternative Door Status?)
 // NOTE: Documentation for 0x220 bit layout is ambiguous (PSACAN.md).
@@ -677,30 +669,27 @@ static void peugeot_407_ms_220_door_handler(const uint8_t * msg, struct msg_desc
     }
 
     //Byte 0 holds the door status bits
-    uint8_t door_byte = msg[0];
+    uint8_t door_byte = msg[ID_0x_220_DOOR_BYTE];
 
     // Update carstate. Since 0x131 is already doing this reliably,
     // you might comment these out unless logs show 0x220 is needed or
     // provides different information (e.g., locking status in other bits).
     // For now, we'll update, potentially overwriting 0x131's update if 0x220 arrives later.
-    carstate.fl_door = (door_byte & 0x80) ? 1 : 0;
-    carstate.fr_door = (door_byte & 0x40) ? 1 : 0;
-    carstate.rl_door = (door_byte & 0x20) ? 1 : 0;
-    carstate.rr_door = (door_byte & 0x10) ? 1 : 0;
+    carstate.fl_door = (door_byte & ID_0x_220_FL_DOOR_MASK) ? 1 : 0;
+    carstate.fr_door = (door_byte & ID_0x_220_FR_DOOR_MASK) ? 1 : 0;
+    carstate.rl_door = (door_byte & ID_0x_220_RL_DOOR_MASK) ? 1 : 0;
+    carstate.rr_door = (door_byte & ID_0x_220_RR_DOOR_MASK) ? 1 : 0;
     // Bonnet/Tailgate bits are assumptions based on matching 0x131 structure
     //carstate.bonnet = (door_byte & 0x8) ? 1 : 0;   // ASSUMPTION for bit 4 - VERIFY
-    carstate.tailgate = (door_byte & 0x8) ? 1 : 0; // ASSUMPTION for bit 5 - VERIFY
+    carstate.tailgate = (door_byte & ID_0x_220_TAILGATE_MASK) ? 1 : 0; // ASSUMPTION for bit 5 - VERIFY
 }
 
 // --- Defines based on PSACAN.md/PSACANBridge for 0x221 ---
-#define ID_0x221_CONS_BYTE_MSB       4
-#define ID_0x221_CONS_BYTE_LSB       5
-#define ID_0x221_RANGE_BYTE_MSB      2
-#define ID_0x221_RANGE_BYTE_LSB      3
-#define ID_0x221_INV_CONS_BYTE       7
-#define ID_0x221_INV_CONS_MASK      0x01 // Bit 0
-#define ID_0x221_INV_RANGE_BYTE      6
-#define ID_0x221_INV_RANGE_MASK     0x01 // Bit 0
+#define ID_0x221_CONS_BYTE_MSB       1
+#define ID_0x221_RANGE_BYTE_MSB      3
+#define ID_0x221_INV_BYTE       0
+#define ID_0x221_INV_CONS_MASK      0x80 // Bit 0
+#define ID_0x221_INV_RANGE_MASK     0x40 // Bit 1
 
 static void peugeot_407_ms_221_trip_inst_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
@@ -711,7 +700,7 @@ static void peugeot_407_ms_221_trip_inst_handler(const uint8_t * msg, struct msg
     }
 
     // --- Decode Instantaneous Consumption ---
-    uint8_t  inst_consumption_invalid = (msg[ID_0x221_INV_CONS_BYTE] & ID_0x221_INV_CONS_MASK);
+    uint8_t  inst_consumption_invalid = (msg[ID_0x221_INV_BYTE] & ID_0x221_INV_CONS_MASK);
     if (!inst_consumption_invalid) {
         // Read raw Big Endian value. Scaling factor needs verification (e.g., /10 for L/100km?)
         carstate.inst_consumption_raw = get_be16(&msg[ID_0x221_CONS_BYTE_MSB]);
@@ -721,7 +710,7 @@ static void peugeot_407_ms_221_trip_inst_handler(const uint8_t * msg, struct msg
     }
 
     // --- Decode Range (DTE) ---
-    uint8_t  range_invalid = (msg[ID_0x221_INV_RANGE_BYTE] & ID_0x221_INV_RANGE_MASK);
+    uint8_t  range_invalid = (msg[ID_0x221_INV_BYTE] & ID_0x221_INV_RANGE_MASK);
     if (!range_invalid) {
         // Read raw Big Endian value. Units likely km.
         carstate.range_km = get_be16(&msg[ID_0x221_RANGE_BYTE_MSB]);
@@ -734,9 +723,7 @@ static void peugeot_407_ms_221_trip_inst_handler(const uint8_t * msg, struct msg
 // --- Confirmed Byte Indices (based on C4 B7 structure) ---
 #define TRIP_AVG_SPEED_BYTE      0 // km/h
 #define TRIP_DIST_BYTE_MSB       1 // km (High Byte)
-#define TRIP_DIST_BYTE_LSB       2 // km (Low Byte)
-#define TRIP_AVG_CONS_BYTE_MSB   3 // L/100km * 10 (High Byte) - Assuming Big Endian
-#define TRIP_AVG_CONS_BYTE_LSB   4 // L/100km * 10 (Low Byte) - Assuming Big Endian
+#define TRIP_AVG_CONS_BYTE_MSB   3 // L/100km * 10 (High Byte)
 
 // Handler for 0x2A1 (Trip 1 Data)
 static void peugeot_407_ms_2A1_trip1_handler(const uint8_t * msg, struct msg_desc_t * desc) {
@@ -751,11 +738,12 @@ static void peugeot_407_ms_2A1_trip1_handler(const uint8_t * msg, struct msg_des
     // Decode values based on confirmed structure
     carstate.avg_speed1 = msg[TRIP_AVG_SPEED_BYTE]; // km/h
 
-    // Distance = Byte1 << 8 | Byte 2 (km)
-    carstate.trip_distance1 = ((uint32_t)msg[TRIP_DIST_BYTE_MSB] << 8) | msg[TRIP_DIST_BYTE_LSB];
+    // Distance skip first 2 bytes
+    carstate.trip_distance1 = get_be16(&msg[TRIP_DIST_BYTE_MSB]); 
 
     // Average Consumption (Raw L/100km * 10) - Assuming Big Endian
-    carstate.avg_consumption1_raw = ((uint16_t)msg[TRIP_AVG_CONS_BYTE_MSB] << 8) | msg[TRIP_AVG_CONS_BYTE_LSB];
+    carstate.avg_consumption1_raw = get_be16(&msg[TRIP_AVG_CONS_BYTE_MSB]); 
+    
 }
 
 // Handler for 0x261 (Trip 2 Data)
@@ -771,11 +759,11 @@ static void peugeot_407_ms_261_trip2_handler(const uint8_t * msg, struct msg_des
     // Decode values based on confirmed structure
     carstate.avg_speed2 = msg[TRIP_AVG_SPEED_BYTE]; // km/h
 
-    // Distance = Byte1 << 8 | Byte 2 (km)
-    carstate.trip_distance2 = ((uint32_t)msg[TRIP_DIST_BYTE_MSB] << 8) | msg[TRIP_DIST_BYTE_LSB];
+    // Distance skip first 2 bytes
+    carstate.trip_distance2 = get_be16(&msg[TRIP_DIST_BYTE_MSB]); 
 
     // Average Consumption (Raw L/100km * 10) - Assuming Big Endian
-    carstate.avg_consumption2_raw = ((uint16_t)msg[TRIP_AVG_CONS_BYTE_MSB] << 8) | msg[TRIP_AVG_CONS_BYTE_LSB];
+    carstate.avg_consumption2_raw = get_be16(&msg[TRIP_AVG_CONS_BYTE_MSB]); 
 }
 
 
@@ -792,13 +780,12 @@ static struct msg_desc_t peugeot_407_ms[] =
     { 0x3B6,   1000, 0, 0, peugeot_407_ms_vin_3B6_handler },
     { 0x2B6,   1000, 0, 0, peugeot_407_ms_vin_2B6_handler },
 
-    // { 0x131,    100, 0, 0, peugeot_407_ms_131_doors_fuel_handler },
     { 0x0E1,    100, 0, 0, peugeot_407_ms_0E1_parktronic_handler },
     { 0x161,    100, 0, 0, peugeot_407_ms_161_temp_handler },
 
 
     //{ 0x14C,    100, 0, 0, peugeot_407_ms_14C_speed_odo_handler },
-    { 0x168,   1000, 0, 0, peugeot_407_ms_168_temp_battery_handler },
+    //{ 0x168,   1000, 0, 0, peugeot_407_ms_168_temp_battery_handler },
 
     { 0x1D0,    100, 0, 0, peugeot_407_ms_1D0_climate_handler },
 
