@@ -150,7 +150,7 @@ static void canbox_hiworld_psa_ac_process(void) {
     if (car_get_air_ac_max()) data[0] |= 0x40; // Bit 6: AC MAX Mode
     if (car_get_air_recycling()) data[0] |= 0x20; // Bit 5: Recirculation
     if (car_get_air_dual()) data[0] |= 0x10; // Bit 4: Dual Zone Mode
-    // Bit 3: AUTO Mode - Assuming ON if AC is ON and Fan > 0
+    if (car_get_air_auto_mode()) data[0] |= 0x08; // Bit 3: AUTO Mode
     if (ac_on_state && car_get_air_fanspeed() > 0) data[0] |= 0x08;
     if (car_get_air_rear()) data[0] |= 0x04; // Bit 2: Rear Defrost
     // Bit 1 Reserved

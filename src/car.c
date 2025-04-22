@@ -119,10 +119,19 @@ typedef struct car_air_state_t
 	uint8_t rear;
 	uint8_t rear_lock;
 	uint8_t aqs;
+	uint8_t auto_mode;
 
 	uint8_t wind;
 	uint8_t middle;
 	uint8_t floor;
+
+	uint8_t l_wind;
+	uint8_t l_middle;
+	uint8_t l_floor;
+
+	uint8_t r_wind;
+	uint8_t r_middle;
+	uint8_t r_floor;
 
 	uint8_t powerfull;
 	uint8_t fanspeed; // 0 - 7
@@ -144,9 +153,16 @@ static car_air_state_t car_air_state =
 	.rear = STATE_UNDEF,
 	.rear_lock = STATE_UNDEF,
 	.aqs = STATE_UNDEF,
+	.auto_mode = STATE_UNDEF,
 	.wind = STATE_UNDEF,
 	.middle = STATE_UNDEF,
 	.floor = STATE_UNDEF,
+	.l_wind = STATE_UNDEF,
+	.l_middle = STATE_UNDEF,
+	.l_floor = STATE_UNDEF,
+	.r_wind = STATE_UNDEF,
+	.r_middle = STATE_UNDEF,
+	.r_floor = STATE_UNDEF,
 	.powerfull = STATE_UNDEF,
 	.fanspeed = STATE_UNDEF,
 	.l_temp = STATE_UNDEF,
@@ -668,6 +684,14 @@ uint8_t car_get_air_aqs(void)
 	return car_air_state.aqs;
 }
 
+uint8_t car_get_air_auto_mode(void)
+{
+	if (car_air_state.auto_mode == STATE_UNDEF)
+		return 0; // Default to OFF if unknown
+
+	return car_air_state.auto_mode;
+}
+
 uint8_t car_get_air_wind(void)
 {
 	if (car_air_state.wind == STATE_UNDEF)
@@ -690,6 +714,54 @@ uint8_t car_get_air_floor(void)
 		return 0;
 
 	return car_air_state.floor;
+}
+
+uint8_t car_get_air_l_wind(void)
+{
+	if (car_air_state.l_wind == STATE_UNDEF)
+		return 0;
+
+	return car_air_state.l_wind;
+}
+
+uint8_t car_get_air_l_middle(void)
+{
+	if (car_air_state.l_middle == STATE_UNDEF)
+		return 0;
+
+	return car_air_state.l_middle;
+}
+
+uint8_t car_get_air_l_floor(void)
+{
+	if (car_air_state.l_floor == STATE_UNDEF)
+		return 0;
+
+	return car_air_state.l_floor;
+}
+
+uint8_t car_get_air_r_wind(void)
+{
+	if (car_air_state.r_wind == STATE_UNDEF)
+		return 0;
+
+	return car_air_state.r_wind;
+}
+
+uint8_t car_get_air_r_middle(void)
+{
+	if (car_air_state.r_middle == STATE_UNDEF)
+		return 0;
+
+	return car_air_state.r_middle;
+}
+
+uint8_t car_get_air_r_floor(void)
+{
+	if (car_air_state.r_floor == STATE_UNDEF)
+		return 0;
+
+	return car_air_state.r_floor;
 }
 
 uint8_t car_get_air_powerfull(void)

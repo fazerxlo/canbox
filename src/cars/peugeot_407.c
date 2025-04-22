@@ -167,7 +167,7 @@ static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_de
 
 // --- Defines based on PSACANBridge code for 0x128 ---
 #define ID_0x128_BYTE0    0
-#define ID_0x128_PARK_LIGHT_MASK    0x20 // Bit 5: Sidelights/Parking Lights
+#define ID_0x128_PARK_LIGHT_MASK    0x20 // Bit 8: Sidelights/Parking Lights
 #define ID_0x128_SEATBELT_MASK      0x40 // Bit 8: Driver Seatbelt Warning Light (1 = Warning/Unfastened?)
 #define ID_0x128_LOW_FUEL_MASK      0x10 // Bit 4: Low Fuel Warning Light
 
@@ -423,21 +423,20 @@ static void peugeot_407_ms_168_temp_battery_handler(const uint8_t * msg, struct 
 
 
 // --- Defines based on PSACANBridge code for 0x1D0 ---
-#define ID_0x1D0_FAN_BYTE           5
+#define ID_0x1D0_FAN_BYTE           2
 #define ID_0x1D0_FAN_MASK           0x07 // Bits 2-0 for speed 0-7
 
-#define ID_0x1D0_AIRFLOW_BYTE       4
-#define ID_0x1D0_AIRFLOW_WIND_MASK  0x10 // Bit 4: Windshield
-#define ID_0x1D0_AIRFLOW_MID_MASK   0x20 // Bit 5: Face/Middle
-#define ID_0x1D0_AIRFLOW_FLOOR_MASK 0x40 // Bit 6: Floor // Corrected based on typical PSA mapping
+#define ID_0x1D0_AIRFLOW_BYTE       3
+#define ID_0x1D0_AIRFLOW_WIND_MASK  0x04 // Bit 3: Windshield
+#define ID_0x1D0_AIRFLOW_MID_MASK   0x01 // Bit 5: Face/Middle
+#define ID_0x1D0_AIRFLOW_FLOOR_MASK 0x02 // Bit 6: Floor // Corrected based on typical PSA mapping
 
-#define ID_0x1D0_STATUS_BYTE        3
-#define ID_0x1D0_RECIRC_MASK        0x80 // Bit 7: Recirculation
-#define ID_0x1D0_AC_MASK            0x20 // Bit 5: AC Compressor Active
+#define ID_0x1D0_STATUS_BYTE        4
+#define ID_0x1D0_RECIRC_MASK        0x20 // Bit 7: Recirculation
 #define ID_0x1D0_AC_AUTO_MASK       0x08 // Bit 3: Auto mode (Needs verification if reliable)
 
-#define ID_0x1D0_TEMP_L_BYTE        1 // Corrected: PSACANBridge psa.h shows Byte 1 for Left
-#define ID_0x1D0_TEMP_R_BYTE        0 // Corrected: PSACANBridge psa.h shows Byte 0 for Right
+#define ID_0x1D0_TEMP_L_BYTE        5
+#define ID_0x1D0_TEMP_R_BYTE        6
 #define ID_0x1D0_TEMP_RAW_INVALID   0xFF
 #define ID_0x1D0_TEMP_RAW_LO        0x00
 #define ID_0x1D0_TEMP_RAW_HI        0x1F // Value corresponding to "HI"
@@ -455,20 +454,6 @@ static float decode_psa_temp(uint8_t raw_temp) {
 static void peugeot_407_ms_1D0_climate_handler(const uint8_t * msg, struct msg_desc_t * desc)
 {
     if (is_timeout(desc)) {
-        // Reset climate states to default/OFF on timeout
-        car_air_state.fanspeed = 0;
-        car_air_state.wind = 0;
-        car_air_state.middle = 0;
-        car_air_state.floor = 0;
-        car_air_state.ac = 0;
-        car_air_state.recycling = 0;
-        // Reset temps to a default state? Maybe keep last known? For now, set to 'invalid' indicator.
-        car_air_state.l_temp = STATE_UNDEF; // Use STATE_UNDEF for temp invalidity
-        car_air_state.r_temp = STATE_UNDEF;
-        // Reset other air states if they are added later (dual, ac_max etc.)
-        car_air_state.dual = STATE_UNDEF;
-        car_air_state.ac_max = STATE_UNDEF;
-        // ...
         return;
     }
 
@@ -481,9 +466,8 @@ static void peugeot_407_ms_1D0_climate_handler(const uint8_t * msg, struct msg_d
     car_air_state.floor  = (msg[ID_0x1D0_AIRFLOW_BYTE] & ID_0x1D0_AIRFLOW_FLOOR_MASK) ? 1 : 0;
 
     // --- Decode Status Bits ---
-    car_air_state.ac        = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_AC_MASK)       ? 1 : 0;
     car_air_state.recycling = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_RECIRC_MASK)   ? 1 : 0;
-    // bool auto_mode     = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_AC_AUTO_MASK); // Store if needed
+    car_air_state.auto_mode = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_AC_AUTO_MASK)  ? 1 : 0;
 
     // --- Decode Temperatures ---
     uint8_t temp_l_raw = msg[ID_0x1D0_TEMP_L_BYTE];
@@ -502,6 +486,81 @@ static void peugeot_407_ms_1D0_climate_handler(const uint8_t * msg, struct msg_d
     // e.g., Dual mode might be from another message or inferred if L/R temps differ significantly.
     // For now, we only decode what's directly in 0x1D0 according to PSACANBridge.
 }
+
+
+
+// Handler for CAN ID 0x1E3 (Climate Status for EMF Display?)
+// Decodes climate settings based on analysis of python simulator code.
+// NOTE: This overlaps significantly with 0x1D0. Need to verify which ID
+// is the primary source on the target Peugeot 407 and potentially merge logic
+// or prioritize one over the other. Raw temperature/direction values might differ.
+static void peugeot_407_ms_1E3_climate_handler(const uint8_t * msg, struct msg_desc_t * desc)
+{
+    if (is_timeout(desc)) {
+        // Reset relevant car_air_state fields if this message times out
+        // Only reset fields definitively sourced ONLY from 0x1E3 if it differs from 0x1D0.
+        // For now, let's assume 0x1D0 is primary and don't reset everything here.
+        // If 0x1E3 becomes primary, move the resets from 0x1D0's timeout here.
+        return;
+    }
+
+    // Decode Byte 0 (b1 in python code) - Various Status Flags
+    // Python: (recycle<<7 | fan_off<<6 | ac_off<<5 | auto_air<<4 | auto<<3 | hide_fan<<2 | ext_air<<1 | dual)
+    // car_air_state.recycling = (msg[0] & 0x80) ? 1 : 0; // Bit 7: Recycle
+    // Bit 6: 'fan off' state? (Inferred from self.fan&True<<6) - Redundant if we decode fan speed from byte 6
+    // Bit 5: 'ac off' state? (Inferred from ~self.options['auto']&True<<5) - Let's rely on 0x1D0's AC bit for now
+    car_air_state.ac = (msg[0] & 0x20) ? 0 : 1;
+    car_air_state.aqs = (msg[0] & 0x10) ? 0 : 1;
+    // Bit 4: 'auto air'? (From self.options['auto']<<4) - Need definition of 'auto air'
+    uint8_t auto_mode = (msg[0] & 0x08) ? 1 : 0; // Bit 3: 'auto' (text)
+    // Bit 2: 'hide fan'? (Inferred from self.fan<<2) - Likely display logic, not state.
+    // Bit 1: 'ext air'? (From self.options['auto']<<1) - Opposite of recycle? Redundant.
+    car_air_state.dual = (msg[0] & 0x01) ? 1 : 0; // Bit 0: Dual mode
+
+    // Decode Byte 1 (b2 in python code) - Front Defrost
+    // Python: self.options['unfrost_front']<<7
+    // Assuming 'unfrost_front' corresponds to airflow windshield direction:
+    car_air_state.wind = (msg[1] & 0x80) ? 1 : 0; // Bit 7: Front Defrost/Windshield Airflow? Redundant with Byte 4/5?
+
+    // Decode Byte 2 (b3 in python code) - Left Temp + Unknown bits
+    // Python: self.bits | self.temps[0]
+    // Unknown bits: msg[2] & 0xC0 (Python self.bits) - Purpose unclear, ignore for now.
+    car_air_state.l_temp = msg[2] & 0x1F; // Lower 5 bits: Left temperature raw value (Needs mapping like 0x1D0?) - Store raw for now.
+
+    // Decode Byte 3 (b4 in python code) - Right Temp
+    // Python: self.temps[1]
+    car_air_state.r_temp = msg[3] & 0x1F; // Lower 5 bits?: Right temperature raw value - Store raw for now.
+
+    // Decode Byte 4 (b5 in python code) - Left Air Direction
+    // Python: self.dir[0]<<4
+    // Assuming upper 4 bits = direction flags (Wind, Mid, Floor)
+    uint8_t left_dir_bits = (msg[4] >> 4) & 0x0F; // Extract upper nibble
+    // Map bits to directions (This mapping is a GUESS based on common patterns, VERIFY!)
+    // car_air_state.wind = (left_dir_bits & 0x01) ? 1 : 0; // Example: Bit 0 = Wind
+    // car_air_state.middle = (left_dir_bits & 0x02) ? 1 : 0; // Example: Bit 1 = Middle
+    // car_air_state.floor = (left_dir_bits & 0x04) ? 1 : 0; // Example: Bit 2 = Floor
+    // Let's stick with 0x1D0 for direction for now as it's clearer.
+
+    // Decode Byte 5 (b6 in python code) - Right Air Direction
+    // Python: self.dir[1]<<4
+    // 
+    uint8_t right_dir_bits = (msg[5] >> 4) & 0x0F;
+    car_air_state.wind = (right_dir_bits & 0x01) ? 1 : 0; // Example: Bit 0 = Wind
+    car_air_state.middle = (right_dir_bits & 0x02) ? 1 : 0; // Example: Bit 1 = Middle
+    car_air_state.floor = (right_dir_bits & 0x04) ? 1 : 0; // Example: Bit 2 = Floor
+
+
+
+    // Decode Byte 6 (b7 in python code) - Fan Speed
+    // Python: self.fan
+    // Assuming lower 4 bits = fan speed (0-7 or similar?)
+    car_air_state.fanspeed = msg[6] & 0x0F; // Lower 4 bits: Fan speed (Needs scaling/mapping if not 0-7)
+    // Clamp to 0-7 if our state expects that range
+    if (car_air_state.fanspeed > 7) {
+        car_air_state.fanspeed = 7;
+    }
+}
+
 
 // --- Defines based on PSACANBridge/PSACAN.md code for 0x0E1 ---
 #define ID_0x0E1_DISPLAY_ACTIVE_BYTE    5
@@ -679,7 +738,7 @@ static void peugeot_407_ms_220_door_handler(const uint8_t * msg, struct msg_desc
     carstate.fr_door = (door_byte & ID_0x_220_FR_DOOR_MASK) ? 1 : 0;
     carstate.rl_door = (door_byte & ID_0x_220_RL_DOOR_MASK) ? 1 : 0;
     carstate.rr_door = (door_byte & ID_0x_220_RR_DOOR_MASK) ? 1 : 0;
-    // Bonnet/Tailgate bits are assumptions based on matching 0x131 structure
+    // Bonnet may be read from warning messages
     //carstate.bonnet = (door_byte & 0x8) ? 1 : 0;   // ASSUMPTION for bit 4 - VERIFY
     carstate.tailgate = (door_byte & ID_0x_220_TAILGATE_MASK) ? 1 : 0; // ASSUMPTION for bit 5 - VERIFY
 }
@@ -788,6 +847,7 @@ static struct msg_desc_t peugeot_407_ms[] =
     //{ 0x168,   1000, 0, 0, peugeot_407_ms_168_temp_battery_handler },
 
     { 0x1D0,    100, 0, 0, peugeot_407_ms_1D0_climate_handler },
+    { 0x1E3,    100, 0, 0, peugeot_407_ms_1E3_climate_handler },
 
     { 0x221,    500, 0, 0, peugeot_407_ms_221_trip_inst_handler },
     { 0x2A1,    500, 0, 0, peugeot_407_ms_2A1_trip1_handler }, 

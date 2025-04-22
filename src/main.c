@@ -337,6 +337,8 @@ void print_debug(void)
     uint8_t dual = car_get_air_dual();
     uint8_t rear_defrost = car_get_air_rear();
     uint8_t aqs = car_get_air_aqs();
+    uint8_t auto_mode = car_get_air_auto_mode();
+
     uint8_t fan_speed = car_get_air_fanspeed();
     uint8_t air_wind = car_get_air_wind();
     uint8_t air_mid = car_get_air_middle();
@@ -449,10 +451,10 @@ void print_debug(void)
 
 
     // --- Climate Section (Optional - Add if useful) ---
-    snprintf(buf, sizeof(buf), "AC  : On:%d Max:%d Rec:%d Dual:%d Rear:%d AQS:%d Fan:%d\r\n",
-             ac_on, ac_max, recirc, dual, rear_defrost, aqs, fan_speed);
+    snprintf(buf, sizeof(buf), "AC  : On:%d Max:%d Rec:%d Dual:%d Rear:%d AQS:%d Fan:%d Auto:%d\r\n",
+             ac_on, ac_max, recirc, dual, rear_defrost, aqs, fan_speed, auto_mode);
     hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
-    snprintf(buf, sizeof(buf), "Air : Wind:%d Mid:%d Floor:%d | Temp L:%02X R:%02X (Raw)\r\n",
+    snprintf(buf, sizeof(buf), "Air : Wind:%d Mid:%d Floor:%d | Temp L:%d R:%d \r\n",
              air_wind, air_mid, air_floor, temp_l_raw, temp_r_raw);
     hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
     // Add seat heating if needed: LSeat:%d RSeat:%d
