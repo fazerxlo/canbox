@@ -182,14 +182,15 @@ static void peugeot_407_ms_0F6_status_handler(const uint8_t * msg, struct msg_de
 }
 
 // --- Defines based on PSACANBridge code for 0x128 ---
-#define ID_0x128_PARK_LIGHT_BYTE    0
+#define ID_0x128_BYTE0    0
 #define ID_0x128_PARK_LIGHT_MASK    0x20 // Bit 5: Sidelights/Parking Lights
+#define ID_0x128_SEATBELT_MASK      0x40 // Bit 8: Driver Seatbelt Warning Light (1 = Warning/Unfastened?)
 
 #define ID_0x128_NEAR_LIGHT_BYTE    4
 #define ID_0x128_NEAR_LIGHT_MASK    0x40 // Bit 6: Low Beam/Near Lights
 
 #define ID_0x128_STATUS_BYTE        7
-#define ID_0x128_SEATBELT_MASK      0x80 // Bit 8: Driver Seatbelt Warning Light (1 = Warning/Unfastened?)
+
 #define ID_0x128_PARK_BRAKE_MASK    0x40 // Bit 6: Parking Brake Light ON
 
 #define ID_0x128_FUEL_BYTE          4
@@ -204,8 +205,11 @@ static void peugeot_407_ms_128_lights_handler(const uint8_t * msg, struct msg_de
     }
 
     // --- Decode Light Status ---
-    carstate.park_lights = (msg[ID_0x128_PARK_LIGHT_BYTE] & ID_0x128_PARK_LIGHT_MASK) ? 1 : 0;
+    carstate.park_lights = (msg[ID_0x128_BYTE0] & ID_0x128_PARK_LIGHT_MASK) ? 1 : 0;
     carstate.near_lights = (msg[ID_0x128_NEAR_LIGHT_BYTE] & ID_0x128_NEAR_LIGHT_MASK) ? 1 : 0;
+    carstate.park_break = (msg[ID_0x128_BYTE0] & ID_0x128_PARK_LIGHT_MASK) ? 1 : 0;
+    carstate.ds_belt = (msg[ID_0x128_BYTE0] & ID_0x128_SEATBELT_MASK) ? 1 : 0;
+    carstate.low_fuel_lvl = (msg[ID_0x128_FUEL_BYTE] & ID_0x128_LOW_FUEL_MASK) ? 1 : 0;
 
 }
 
