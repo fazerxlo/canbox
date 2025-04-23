@@ -467,7 +467,8 @@ static void peugeot_407_ms_1D0_climate_handler(const uint8_t * msg, struct msg_d
 
     // --- Decode Status Bits ---
     car_air_state.recycling = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_RECIRC_MASK)   ? 1 : 0;
-    car_air_state.auto_mode = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_AC_AUTO_MASK)  ? 1 : 0;
+    // now use 0x1E3 for that
+    //car_air_state.auto_mode = (msg[ID_0x1D0_STATUS_BYTE] & ID_0x1D0_AC_AUTO_MASK)  ? 1 : 0;
 
     // --- Decode Temperatures ---
     uint8_t temp_l_raw = msg[ID_0x1D0_TEMP_L_BYTE];
@@ -486,6 +487,19 @@ static void peugeot_407_ms_1D0_climate_handler(const uint8_t * msg, struct msg_d
     // e.g., Dual mode might be from another message or inferred if L/R temps differ significantly.
     // For now, we only decode what's directly in 0x1D0 according to PSACANBridge.
 }
+
+#define ID_0x1E3_BYTE0              0
+#define ID_0x1E3_AIRFLOW_L_BYTE     4
+#define ID_0x1E3_AIRFLOW_R_BYTE     5
+// self.dir[0]<<4 # 4 bits: direction, 4 bits unknown // left seat + dual
+#define ID_0x1E3_AIRFLOW_WIND_MASK  0x40 // Bit 3: Wind
+#define ID_0x1E3_AIRFLOW_MID_MASK   0x10 // Bit 5: Face/Middle
+#define ID_0x1E3_AIRFLOW_FLOOR_MASK 0x20 // Bit 6: Floor
+
+#define ID_0x1E3_AC_ON_MASK     0x20
+#define ID_0x1E3_AQS_ON_MASK    0x10
+#define ID_0x1E3_AUTO_ON_MASK   0x08
+#define ID_0x1E3_DUAL_ON_MASK   0x01
 
 
 
@@ -508,20 +522,29 @@ static void peugeot_407_ms_1E3_climate_handler(const uint8_t * msg, struct msg_d
     // Python: (recycle<<7 | fan_off<<6 | ac_off<<5 | auto_air<<4 | auto<<3 | hide_fan<<2 | ext_air<<1 | dual)
     // car_air_state.recycling = (msg[0] & 0x80) ? 1 : 0; // Bit 7: Recycle
     // Bit 6: 'fan off' state? (Inferred from self.fan&True<<6) - Redundant if we decode fan speed from byte 6
-    // Bit 5: 'ac off' state? (Inferred from ~self.options['auto']&True<<5) - Let's rely on 0x1D0's AC bit for now
-    car_air_state.ac = (msg[0] & 0x20) ? 0 : 1;
-    car_air_state.aqs = (msg[0] & 0x10) ? 0 : 1;
+    // Bit 5: 'ac off' state? (Inferred from ~self.options['auto']&True<<5)
+    car_air_state.ac = (msg[ID_0x1E3_BYTE0] & ID_0x1E3_AC_ON_MASK) ? 0 : 1;
+    car_air_state.aqs = (msg[ID_0x1E3_BYTE0] & ID_0x1E3_AQS_ON_MASK) ? 1 : 0;
     // Bit 4: 'auto air'? (From self.options['auto']<<4) - Need definition of 'auto air'
-    uint8_t auto_mode = (msg[0] & 0x08) ? 1 : 0; // Bit 3: 'auto' (text)
+    car_air_state.auto_mode = (msg[ID_0x1E3_BYTE0] & ID_0x1E3_AUTO_ON_MASK) ? 1 : 0; // Bit 3: 'auto' (text)
     // Bit 2: 'hide fan'? (Inferred from self.fan<<2) - Likely display logic, not state.
     // Bit 1: 'ext air'? (From self.options['auto']<<1) - Opposite of recycle? Redundant.
-    car_air_state.dual = (msg[0] & 0x01) ? 1 : 0; // Bit 0: Dual mode
+    car_air_state.dual = (msg[ID_0x1E3_BYTE0] & ID_0x1E3_DUAL_ON_MASK) ? 1 : 0; // Bit 0: Dual mode
 
     // Decode Byte 1 (b2 in python code) - Front Defrost
     // Python: self.options['unfrost_front']<<7
     // Assuming 'unfrost_front' corresponds to airflow windshield direction:
-    car_air_state.wind = (msg[1] & 0x80) ? 1 : 0; // Bit 7: Front Defrost/Windshield Airflow? Redundant with Byte 4/5?
 
+    // --- Decode Airflow Direction ---
+    car_air_state.l_wind   = (msg[ID_0x1E3_AIRFLOW_L_BYTE] & ID_0x1E3_AIRFLOW_WIND_MASK) ? 1 : 0;
+    car_air_state.l_middle = (msg[ID_0x1E3_AIRFLOW_L_BYTE] & ID_0x1E3_AIRFLOW_MID_MASK)  ? 1 : 0;
+    car_air_state.l_floor  = (msg[ID_0x1E3_AIRFLOW_L_BYTE] & ID_0x1E3_AIRFLOW_FLOOR_MASK) ? 1 : 0;
+
+
+    car_air_state.r_wind   = (msg[ID_0x1E3_AIRFLOW_R_BYTE] & ID_0x1E3_AIRFLOW_WIND_MASK) ? 1 : 0;
+    car_air_state.r_middle = (msg[ID_0x1E3_AIRFLOW_R_BYTE] & ID_0x1E3_AIRFLOW_MID_MASK)  ? 1 : 0;
+    car_air_state.r_floor  = (msg[ID_0x1E3_AIRFLOW_R_BYTE] & ID_0x1E3_AIRFLOW_FLOOR_MASK) ? 1 : 0;
+    
     // Decode Byte 2 (b3 in python code) - Left Temp + Unknown bits
     // Python: self.bits | self.temps[0]
     // Unknown bits: msg[2] & 0xC0 (Python self.bits) - Purpose unclear, ignore for now.
@@ -534,22 +557,12 @@ static void peugeot_407_ms_1E3_climate_handler(const uint8_t * msg, struct msg_d
     // Decode Byte 4 (b5 in python code) - Left Air Direction
     // Python: self.dir[0]<<4
     // Assuming upper 4 bits = direction flags (Wind, Mid, Floor)
-    uint8_t left_dir_bits = (msg[4] >> 4) & 0x0F; // Extract upper nibble
+    //uint8_t left_dir_bits = (msg[4] >> 4) & 0x0F; // Extract upper nibble
     // Map bits to directions (This mapping is a GUESS based on common patterns, VERIFY!)
     // car_air_state.wind = (left_dir_bits & 0x01) ? 1 : 0; // Example: Bit 0 = Wind
     // car_air_state.middle = (left_dir_bits & 0x02) ? 1 : 0; // Example: Bit 1 = Middle
     // car_air_state.floor = (left_dir_bits & 0x04) ? 1 : 0; // Example: Bit 2 = Floor
     // Let's stick with 0x1D0 for direction for now as it's clearer.
-
-    // Decode Byte 5 (b6 in python code) - Right Air Direction
-    // Python: self.dir[1]<<4
-    // 
-    uint8_t right_dir_bits = (msg[5] >> 4) & 0x0F;
-    car_air_state.wind = (right_dir_bits & 0x01) ? 1 : 0; // Example: Bit 0 = Wind
-    car_air_state.middle = (right_dir_bits & 0x02) ? 1 : 0; // Example: Bit 1 = Middle
-    car_air_state.floor = (right_dir_bits & 0x04) ? 1 : 0; // Example: Bit 2 = Floor
-
-
 
     // Decode Byte 6 (b7 in python code) - Fan Speed
     // Python: self.fan

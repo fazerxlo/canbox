@@ -346,6 +346,13 @@ void print_debug(void)
     uint8_t temp_l_raw = car_get_air_l_temp(); // Raw value from CAN
     uint8_t temp_r_raw = car_get_air_r_temp(); // Raw value from CAN
 
+    uint8_t air_l_wind = car_get_air_l_wind();
+    uint8_t air_l_mid = car_get_air_l_middle();
+    uint8_t air_l_floor = car_get_air_l_floor();
+
+    uint8_t air_r_wind = car_get_air_r_wind();
+    uint8_t air_r_mid = car_get_air_r_middle();
+    uint8_t air_r_floor = car_get_air_r_floor();
 
     // --- Clear Screen & Print Header ---
     clr_rscreen(); // Clear screen from cursor down
@@ -455,8 +462,13 @@ void print_debug(void)
              ac_on, ac_max, recirc, dual, rear_defrost, aqs, fan_speed, auto_mode);
     hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
     snprintf(buf, sizeof(buf), "Air : Wind:%d Mid:%d Floor:%d | Temp L:%d R:%d \r\n",
-             air_wind, air_mid, air_floor, temp_l_raw, temp_r_raw);
+             air_wind, air_mid, air_floor, temp_l_raw, temp_r_raw);          
     hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+
+    snprintf(buf, sizeof(buf), "AirL: Wind:%d Mid:%d Floor:%d | AirR: Wind:%d Mid:%d Floor:%d\r\n",
+             air_l_wind, air_l_mid, air_l_floor, air_r_wind, air_r_mid, air_r_floor);
+    hw_usart_write(hw_usart_get(), (uint8_t *)buf, strlen(buf));
+
     // Add seat heating if needed: LSeat:%d RSeat:%d
 
     // --- Radar Section ---
